@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { Weekday } from '../core/calendar.ts';
 
 export const SETTINGS_FIELD = 'econome';
 export const DEFAULT_DAILY_CLAUDE_CAP_USD = 1;
@@ -11,8 +12,6 @@ const isTimeZone = (value: string) => {
     return false;
   }
 };
-
-const Weekday = z.enum(['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']);
 
 export const SettingsSchema = z.object({
   timezone: z
