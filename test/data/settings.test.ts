@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DAILY_CLAUDE_CAP_USD, SettingsSchema, toUpdatePaths, withDefaults } from './settings.ts';
+import { DEFAULT_DAILY_CLAUDE_CAP_USD, SettingsSchema, toUpdatePaths, withDefaults } from '../../src/data/settings.ts';
 
 describe('SettingsSchema', () => {
   it('accepts a complete set of settings', () => {

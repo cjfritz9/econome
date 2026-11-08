@@ -4,7 +4,7 @@ import {
   NOT_A_MEMBER_MESSAGE,
   requireHousehold,
   type HouseholdRecord,
-} from './household.ts';
+} from '../../src/data/household.ts';
 
 const storeWith = (userHouseholds: Record<string, string>, households: Record<string, HouseholdRecord>) => ({
   findUserHouseholdId: async (uid: string) => userHouseholds[uid],

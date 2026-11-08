@@ -8,6 +8,7 @@
   },
   "scripts": {
     "mcp": "node --env-file=.env --import tsx src/mcp/main.ts",
+    "inspector": "pnpm dlx @modelcontextprotocol/inspector@latest -- pnpm --silent mcp",
     "test": "vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

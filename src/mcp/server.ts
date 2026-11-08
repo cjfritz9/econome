@@ -1,9 +1,12 @@
 import { McpServer } from '@modelcontextprotocol/server';
+import * as z from 'zod';
 import { requireHousehold, type Households } from '../data/household.ts';
+import { NOT_A_MEAL_TAG, readLibrary, withTag, type Recipes } from '../data/recipes.ts';
 import { SettingsSchema, toUpdatePaths, withDefaults } from '../data/settings.ts';
 
 export interface ServerDeps {
   households: Households;
+  recipes: Recipes;
   actingUid: string;
 }
 
@@ -11,8 +14,8 @@ const jsonResult = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
 });
 
-export const createServer = ({ households, actingUid }: ServerDeps) => {
-  const server = new McpServer({ name: 'econome', version: '0.1.0' });
+export const createServer = ({ households, recipes, actingUid }: ServerDeps) => {
+  const server = new McpServer({ name: 'econome', version: '0.2.0' });
 
   server.registerTool(
     'get_household',
@@ -46,6 +49,25 @@ export const createServer = ({ households, actingUid }: ServerDeps) => {
       await households.updateSettings(household.id, paths);
       const updated = await requireHousehold(households, actingUid);
       return jsonResult(withDefaults(updated.settings));
+    },
+  );
+
+  server.registerTool(
+    'list_recipes',
+    {
+      description: `List the household's Mise recipes that can be planned: id, title, description, servings and tags. Archived recipes and anything tagged ${NOT_A_MEAL_TAG} are left out. Recipes Économe can't use are listed under "skipped" with the reason, to be fixed in Mise.`,
+      inputSchema: z.object({
+        tag: z.string().optional().describe('Only list recipes with this tag, in any letter case'),
+      }),
+    },
+    async ({ tag }) => {
+      const household = await requireHousehold(households, actingUid);
+      const library = readLibrary(await recipes.listRecipeDocs(household.id));
+      const listed = tag ? withTag(library.recipes, tag) : library.recipes;
+      return jsonResult({
+        recipes: listed.map(({ id, title, description, servings, tags }) => ({ id, title, description, servings, tags })),
+        ...(library.skipped.length > 0 && { skipped: library.skipped }),
+      });
     },
   );
 
