@@ -3,11 +3,13 @@ import * as z from 'zod';
 const EnvSchema = z.object({
   FIREBASE_PROJECT_ID: z.string().min(1),
   ECONOME_ACTING_EMAIL: z.email(),
+  ANTHROPIC_API_KEY: z.string().min(1),
 });
 
 export interface Config {
   firebaseProjectId: string;
   actingEmail: string;
+  anthropicApiKey: string;
 }
 
 export const loadConfig = (env: NodeJS.ProcessEnv): Config => {
@@ -18,5 +20,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv): Config => {
   return {
     firebaseProjectId: parsed.data.FIREBASE_PROJECT_ID,
     actingEmail: parsed.data.ECONOME_ACTING_EMAIL,
+    anthropicApiKey: parsed.data.ANTHROPIC_API_KEY,
   };
 };

@@ -34,6 +34,8 @@ export interface Claude {
 export const spendCapMessage = (spent: number, cap: number) =>
   `Économe has spent $${spent.toFixed(2)} of its $${cap.toFixed(2)} daily Claude budget, so it stopped before calling Claude. Raise dailyClaudeCapUsd with update_settings, or try again tomorrow.`;
 
+export class SpendCapError extends Error {}
+
 const readOutput = <S extends z.ZodType>(schema: S, text: string): z.output<S> => {
   try {
     return schema.parse(JSON.parse(text));
@@ -55,7 +57,9 @@ export const createClaude = ({
     const settings = withDefaults(household.settings);
     const day = householdToday(settings.timezone, now());
     const spent = await ledger.spentOn(household.id, day);
-    if (spent >= settings.dailyClaudeCapUsd) throw new Error(spendCapMessage(spent, settings.dailyClaudeCapUsd));
+    if (spent >= settings.dailyClaudeCapUsd) {
+      throw new SpendCapError(spendCapMessage(spent, settings.dailyClaudeCapUsd));
+    }
 
     const reply = await send(request);
     const usd = costOf(request.model, reply.usage);
