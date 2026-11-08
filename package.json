@@ -9,12 +9,13 @@
   "scripts": {
     "mcp": "node --env-file=.env --import tsx src/mcp/main.ts",
     "inspector": "pnpm dlx @modelcontextprotocol/inspector@latest -- pnpm --silent mcp",
-    "test": "vitest run",
+    "test": "LOG_LEVEL=silent vitest run",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "check": "pnpm typecheck && pnpm lint && pnpm test"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.6.0",
     "@modelcontextprotocol/server": "^2.4.0",
     "firebase-admin": "^14.5.0",
     "pino": "^10.4.0",

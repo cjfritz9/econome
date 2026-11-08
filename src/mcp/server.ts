@@ -1,15 +1,17 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import { chooseWeek, Weekday, weeksEndingWith } from '../core/calendar.ts';
+import { chooseWeek, householdToday, Weekday, weeksEndingWith } from '../core/calendar.ts';
 import { requireHousehold, type Households } from '../data/household.ts';
 import { NOT_A_MEAL_TAG, readLibrary, withTag, type Recipes } from '../data/recipes.ts';
 import { SettingsSchema, toUpdatePaths, withDefaults } from '../data/settings.ts';
 import { lastPlannedDates, loadWeeks, planMeals, type PlannedWeek, type Weeks } from '../data/weeks.ts';
+import type { SpendLedger } from '../llm/claude.ts';
 
 export interface ServerDeps {
   households: Households;
   recipes: Recipes;
   weeks: Weeks;
+  spend: SpendLedger;
   actingUid: string;
 }
 
@@ -28,22 +30,28 @@ const jsonResult = (value: unknown) => ({
 
 const weekResult = ({ week, meals }: PlannedWeek) => ({ week: week.id, start: week.start, end: week.end, meals });
 
-export const createServer = ({ households, recipes, weeks, actingUid }: ServerDeps) => {
-  const server = new McpServer({ name: 'econome', version: '0.3.0' });
+export const createServer = ({ households, recipes, weeks, spend, actingUid }: ServerDeps) => {
+  const server = new McpServer({ name: 'econome', version: '0.4.0' });
 
   server.registerTool(
     'get_household',
     {
-      description: "Show the household Économe is working for: its name, its members, and Économe's settings.",
+      description:
+        "Show the household Économe is working for: its name, its members, Économe's settings, and what Économe has spent on Claude today against its daily cap.",
     },
     async () => {
       const household = await requireHousehold(households, actingUid);
-      const members = await households.findMemberProfiles(household.members);
+      const settings = withDefaults(household.settings);
+      const [members, spentToday] = await Promise.all([
+        households.findMemberProfiles(household.members),
+        spend.spentOn(household.id, householdToday(settings.timezone, new Date())),
+      ]);
       return jsonResult({
         id: household.id,
         name: household.name,
         members,
-        settings: withDefaults(household.settings),
+        settings,
+        claudeSpendToday: { usd: Number(spentToday.toFixed(4)), cap: settings.dailyClaudeCapUsd },
       });
     },
   );

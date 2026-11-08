@@ -3,6 +3,7 @@ import { loadConfig } from '../config.ts';
 import { connectFirebase } from '../data/firebase.ts';
 import { firestoreHouseholds } from '../data/firestore-households.ts';
 import { firestoreRecipes } from '../data/firestore-recipes.ts';
+import { firestoreSpend } from '../data/firestore-spend.ts';
 import { firestoreWeeks } from '../data/firestore-weeks.ts';
 import { logger } from '../logger.ts';
 import { createServer } from './server.ts';
@@ -16,6 +17,7 @@ const main = async () => {
     households: firestoreHouseholds(db),
     recipes: firestoreRecipes(db),
     weeks: firestoreWeeks(db),
+    spend: firestoreSpend(db),
     actingUid: actingUser.uid,
   });
   await server.connect(new StdioServerTransport());

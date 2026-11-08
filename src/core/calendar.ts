@@ -33,8 +33,11 @@ export const todayIn = (timeZone: string, now: Date): string => {
   return `${parts.year}-${parts.month}-${parts.day}`;
 };
 
+export const householdToday = (timeZone: string | undefined, now: Date) =>
+  todayIn(timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone, now);
+
 export const chooseWeek = (timeZone: string | undefined, date: string | undefined, now = new Date()) =>
-  weekOf(date ?? nextMonday(todayIn(timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone, now)));
+  weekOf(date ?? nextMonday(householdToday(timeZone, now)));
 
 export const weeksEndingWith = (week: CalendarWeek, count: number): CalendarWeek[] =>
   Array.from({ length: count }, (_, back) => weekOf(addDays(week.start, -7 * back)));
