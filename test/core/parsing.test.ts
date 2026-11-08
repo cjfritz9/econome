@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import { lineKey } from '../../src/core/ingredient-lines.ts';
-import { parseRecipes, unsureLines } from '../../src/core/parsing.ts';
+import { parseRecipes, undecidedIngredients, unsureLines } from '../../src/core/parsing.ts';
 import { SpendCapError, type Claude } from '../../src/llm/claude.ts';
-import { answeringClaude, household, memoryParsedLines, parsedLine, parseOf, recipeWith } from '../fakes.ts';
+import {
+  answeringClaude,
+  entry,
+  household,
+  memoryIngredients,
+  memoryNotes,
+  memoryParsedLines,
+  note,
+  parsedLine,
+  parseOf,
+  recipeWith,
+} from '../fakes.ts';
 
 const salt = { amount: 1, unit: 'tsp', name: 'salt' };
 const garlic = { amount: 2, unit: 'cloves', name: 'garlic' };
@@ -20,7 +31,7 @@ describe('parseRecipes', () => {
     const { store, stored } = memoryParsedLines([parsedLine(salt, parseOf('salt'))]);
     const { claude, prompts } = answeringClaude(answerEveryLine);
 
-    const run = await parseRecipes({ claude, parsedLines: store }, household, [recipeWith('soup', [salt, garlic])]);
+    const run = await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [recipeWith('soup', [salt, garlic])]);
 
     expect(run).toMatchObject({ parsed: 1, reused: 1, failed: [], stopped: null });
     expect(prompts).toHaveLength(1);
@@ -33,7 +44,7 @@ describe('parseRecipes', () => {
     const { store } = memoryParsedLines([parsedLine(salt, parseOf('salt'))]);
     const { claude, prompts } = answeringClaude(answerEveryLine);
 
-    await parseRecipes({ claude, parsedLines: store }, household, [recipeWith('salted', [salt])]);
+    await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [recipeWith('salted', [salt])]);
 
     expect(prompts).toEqual([]);
   });
@@ -42,7 +53,7 @@ describe('parseRecipes', () => {
     const { store } = memoryParsedLines([parsedLine(salt, parseOf('salt'))]);
     const { claude, prompts } = answeringClaude(answerEveryLine);
 
-    await parseRecipes({ claude, parsedLines: store }, household, [recipeWith('a', [garlic]), recipeWith('b', [tofu])]);
+    await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [recipeWith('a', [garlic]), recipeWith('b', [tofu])]);
 
     expect(prompts[1]).toContain('Known ingredient names: garlic; salt');
   });
@@ -51,7 +62,7 @@ describe('parseRecipes', () => {
     const { store } = memoryParsedLines();
     const { claude } = answeringClaude((prompt) => (prompt.includes('garlic') ? { lines: [] } : answerEveryLine(prompt)));
 
-    const run = await parseRecipes({ claude, parsedLines: store }, household, [recipeWith('a', [garlic]), recipeWith('b', [tofu])]);
+    const run = await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [recipeWith('a', [garlic]), recipeWith('b', [tofu])]);
 
     expect(run.parsed).toBe(1);
     expect(run.failed).toEqual([{ recipeId: 'a', reason: expect.stringMatching(/each line exactly once/) }]);
@@ -68,7 +79,7 @@ describe('parseRecipes', () => {
       },
     };
 
-    const run = await parseRecipes({ claude, parsedLines: store }, household, [
+    const run = await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [
       recipeWith('a', [garlic]),
       recipeWith('b', [tofu]),
       recipeWith('c', [salt]),
@@ -80,6 +91,43 @@ describe('parseRecipes', () => {
   });
 });
 
+describe('parseRecipes with aliases', () => {
+  it("gives a new line the household's name for an alias, in alternatives too", async () => {
+    const { store, stored } = memoryParsedLines();
+    const { store: ingredients } = memoryIngredients([entry('salt', { aliases: ['kosher salt'] })]);
+    const kosher = { amount: 1, unit: 'tsp', name: 'Kosher salt or sea salt' };
+    const { claude } = answeringClaude(() => ({
+      lines: [{ line: 1, ...parseOf('Kosher Salt', { alternatives: ['sea salt', 'kosher salt'] }) }],
+    }));
+
+    await parseRecipes({ claude, parsedLines: store, ingredients, notes: memoryNotes().store }, household, [recipeWith('a', [kosher])]);
+
+    expect(stored.get(lineKey(kosher))?.parse).toMatchObject({ ingredient: 'salt', alternatives: ['sea salt'] });
+    expect(stored.get(lineKey(kosher))?.source).toBe('claude');
+  });
+});
+
+describe('parseRecipes with notes', () => {
+  it("gives Claude the household's ingredient notes, and not notes on other topics", async () => {
+    const { store } = memoryParsedLines();
+    const { store: notes } = memoryNotes([
+      note('ingredients.md', 'We cook with broth, not wine.'),
+      note('ingredients/oils.md', 'Frying means neutral oil.'),
+      note('planning.md', 'No cilantro for Jeana.'),
+    ]);
+    const { claude, prompts } = answeringClaude(answerEveryLine);
+
+    await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes }, household, [
+      recipeWith('a', [garlic]),
+    ]);
+
+    expect(prompts[0]).toContain(
+      'Household rules for turning recipe lines into groceries:\n[ingredients.md]\nWe cook with broth, not wine.\n\n[ingredients/oils.md]\nFrying means neutral oil.\n',
+    );
+    expect(prompts[0]).not.toContain('cilantro');
+  });
+});
+
 describe('parseRecipes with reparse', () => {
   it("parses Claude's lines again once each, keeps corrections, and doesn't seed names from the lines being redone", async () => {
     const { store, stored } = memoryParsedLines([
@@ -88,7 +136,7 @@ describe('parseRecipes with reparse', () => {
     ]);
     const { claude, prompts } = answeringClaude(answerEveryLine);
 
-    const run = await parseRecipes({ claude, parsedLines: store }, household, [recipeWith('a', [garlic, salt]), recipeWith('b', [garlic])], {
+    const run = await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [recipeWith('a', [garlic, salt]), recipeWith('b', [garlic])], {
       reparse: true,
     });
 
@@ -108,6 +156,22 @@ describe('unsureLines', () => {
 
     expect(unsureLines([recipeWith('a', [garlic, tofu]), recipeWith('b', [garlic, salt])], lines)).toEqual([
       { line: '2 cloves | garlic', recipes: ['Title of a', 'Title of b'], ingredient: 'garlic', doubt: 'clove count is a guess' },
+    ]);
+  });
+});
+
+describe('undecidedIngredients', () => {
+  it("lists the recipes' ingredients with no buying decision yet, once each, sorted", () => {
+    const lines = new Map(
+      [parsedLine(salt, parseOf('salt')), parsedLine(garlic, parseOf('garlic')), parsedLine(tofu, parseOf('extra-firm tofu'))].map(
+        (parsed) => [parsed.key, parsed],
+      ),
+    );
+    const entries = [entry('salt', { buying: 'staple' }), entry('garlic')];
+
+    expect(undecidedIngredients([recipeWith('a', [salt, garlic, tofu]), recipeWith('b', [garlic])], lines, entries)).toEqual([
+      'extra-firm tofu',
+      'garlic',
     ]);
   });
 });

@@ -4,6 +4,8 @@ import { loadConfig } from '../config.ts';
 import { connectFirebase } from '../data/firebase.ts';
 import { firestoreDecisions } from '../data/firestore-decisions.ts';
 import { firestoreHouseholds } from '../data/firestore-households.ts';
+import { firestoreIngredients } from '../data/firestore-ingredients.ts';
+import { firestoreNotes } from '../data/firestore-notes.ts';
 import { firestoreParsedLines } from '../data/firestore-parsed-lines.ts';
 import { firestoreRecipes } from '../data/firestore-recipes.ts';
 import { firestoreSpend } from '../data/firestore-spend.ts';
@@ -25,6 +27,8 @@ const main = async () => {
     weeks: firestoreWeeks(db),
     spend,
     parsedLines: firestoreParsedLines(db),
+    ingredients: firestoreIngredients(db),
+    notes: firestoreNotes(db),
     decisions: firestoreDecisions(db),
     claude: createClaude({ send: anthropicSender(new Anthropic({ apiKey: config.anthropicApiKey })), ledger: spend }),
     actingUid: actingUser.uid,

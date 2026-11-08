@@ -2,9 +2,19 @@ import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import { chooseWeek, householdToday, Weekday, weeksEndingWith } from '../core/calendar.ts';
 import { formatLine } from '../core/ingredient-lines.ts';
-import { parseRecipes, unsureLines } from '../core/parsing.ts';
+import { parseRecipes, undecidedIngredients, unsureLines } from '../core/parsing.ts';
 import type { Decisions } from '../data/decisions.ts';
 import { requireHousehold, type Households } from '../data/household.ts';
+import {
+  addAlias,
+  BUYING,
+  describeIngredients,
+  normalizeName,
+  removeAlias,
+  setBuying,
+  type IngredientRegistry,
+} from '../data/ingredients.ts';
+import { INGREDIENT_NOTES, NoteContent, NotePath, type Notes } from '../data/notes.ts';
 import { correctLine, ingredientIndex, renameIngredient, type ParsedLines } from '../data/parsed-lines.ts';
 import { NOT_A_MEAL_TAG, readLibrary, withTag, type Recipes } from '../data/recipes.ts';
 import { SettingsSchema, toUpdatePaths, withDefaults } from '../data/settings.ts';
@@ -18,6 +28,8 @@ export interface ServerDeps {
   weeks: Weeks;
   spend: SpendLedger;
   parsedLines: ParsedLines;
+  ingredients: IngredientRegistry;
+  notes: Notes;
   decisions: Decisions;
   claude: Claude;
   actingUid: string;
@@ -29,6 +41,19 @@ const LineText = z
   .describe('The line exactly as parse_ingredients or list_ingredients shows it, such as "2 piece | green onions, chopped"');
 
 const RECENT_WEEKS = 13;
+
+const INSTRUCTIONS = `Économe plans the household's week from its Mise recipes and turns the recipes into a shopping list. It learns from the household: whenever it judges something on its own, such as how a recipe line was parsed, which ingredient names are the same food, or how an ingredient is bought, the household can correct it with a tool, and the correction is kept and saved as a decision.
+
+When something looks wrong or unclear, such as a line that doesn't say what to buy, two names that might be the same food, or an ingredient whose buying is undecided, ask the household before deciding. Then record the answer with the matching tool: correct_ingredient_line for one line, rename_ingredient to merge two names (new recipes follow it too), and set_buying for weekly, staple or never bought. A rule that fits none of them, such as "we cook with broth, not wine", goes in a note with write_note. Never treat two foods as the same without asking.
+
+A recipe's ingredient list is the source of truth, and Économe never reads its steps. When a line in a recipe is itself wrong or vague, suggest fixing it in Mise, so the recipe is right for whoever cooks it.
+
+Read the notes with read_notes before planning a week or settling an ingredient question.`;
+
+const IngredientNames = z
+  .array(z.string().min(1))
+  .min(1)
+  .describe('Ingredient names exactly as list_ingredients shows them');
 
 const WeekDate = z.iso
   .date()
@@ -49,11 +74,19 @@ export const createServer = ({
   weeks,
   spend,
   parsedLines,
+  ingredients,
+  notes,
   decisions,
   claude,
   actingUid,
 }: ServerDeps) => {
-  const server = new McpServer({ name: 'econome', version: '0.5.0' });
+  const server = new McpServer({ name: 'econome', version: '0.7.0' }, { instructions: INSTRUCTIONS });
+
+  const loadIngredients = async (householdId: string) => {
+    const [lines, entries] = await Promise.all([parsedLines.list(householdId), ingredients.list(householdId)]);
+    const known = new Set([...lines.map(({ parse }) => parse.ingredient), ...entries.map(({ name }) => name)]);
+    return { lines, entries, known };
+  };
 
   server.registerTool(
     'get_household',
@@ -170,7 +203,7 @@ export const createServer = ({
     'parse_ingredients',
     {
       description:
-        "Have Claude parse the ingredient lines of the household's recipes: the food to buy, amount, unit, package size, prep, brand, alternatives, and whether it's optional. Lines parsed before are reused, so only new or changed lines cost anything. Returns a summary and the lines Claude was unsure about, to review with the household and fix with correct_ingredient_line.",
+        "Have Claude parse the ingredient lines of the household's recipes: the food to buy, amount, unit, package size, prep, brand, alternatives, and whether it's optional. Lines parsed before are reused, so only new or changed lines cost anything. New lines follow the household's aliases and its ingredient notes; use reparse to apply a new note to lines Claude parsed before. Returns a summary, the lines Claude was unsure about (to review with the household and fix with correct_ingredient_line), and the ingredients whose buying isn't decided yet (to settle with set_buying).",
       inputSchema: z.object({
         recipeIds: z.array(z.string()).optional().describe('Only these recipes; every plannable recipe if left out'),
         reparse: z
@@ -186,13 +219,15 @@ export const createServer = ({
       const unknown = (recipeIds ?? []).filter((id) => !chosen.some((recipe) => recipe.id === id));
       if (unknown.length > 0) throw new Error(`No plannable recipe has these ids: ${unknown.join(', ')}.`);
 
-      const run = await parseRecipes({ claude, parsedLines }, household, chosen, { reparse });
+      const run = await parseRecipes({ claude, parsedLines, ingredients, notes }, household, chosen, { reparse });
+      const undecided = undecidedIngredients(chosen, run.lines, await ingredients.list(household.id));
       return jsonResult({
         parsed: run.parsed,
         reused: run.reused,
         ...(run.stopped && { stopped: run.stopped }),
         ...(run.failed.length > 0 && { failed: run.failed }),
         unsure: unsureLines(chosen, run.lines),
+        ...(undecided.length > 0 && { undecided }),
       });
     },
   );
@@ -201,11 +236,19 @@ export const createServer = ({
     'list_ingredients',
     {
       description:
-        'List every ingredient name parsed out of the recipes, with the recipe lines behind each, to spot duplicates such as "scallion" and "green onion" and merge them with rename_ingredient.',
+        'List every ingredient name parsed out of the recipes, with how it\'s bought (weekly, staple, never or undecided), its aliases, and the recipe lines behind it. Use it to spot duplicates such as "scallion" and "green onion" and merge them with rename_ingredient.',
+      inputSchema: z.object({
+        only: z
+          .enum(['undecided', ...BUYING])
+          .optional()
+          .describe('Only ingredients bought this way, or "undecided" for the ones not settled yet'),
+      }),
     },
-    async () => {
+    async ({ only }) => {
       const household = await requireHousehold(households, actingUid);
-      return jsonResult(ingredientIndex(await parsedLines.list(household.id)));
+      const { lines, entries } = await loadIngredients(household.id);
+      const described = describeIngredients(ingredientIndex(lines), entries);
+      return jsonResult(only ? described.filter(({ buying }) => buying === only) : described);
     },
   );
 
@@ -238,15 +281,21 @@ export const createServer = ({
     'rename_ingredient',
     {
       description:
-        'Rename an ingredient everywhere it was parsed, including where it appears as an alternative, to merge duplicates such as "scallion" into "green onion". Saved as a decision.',
+        'Rename an ingredient everywhere it was parsed, including where it appears as an alternative, to merge duplicates such as "scallion" into "green onion". The old name becomes an alias, so new recipes that say it get the new name too. With no line using the old name yet, it only adds the alias, as long as the new name is a known ingredient. Saved as a decision.',
       inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1) }),
     },
     async ({ from, to }) => {
       const household = await requireHousehold(households, actingUid);
-      const renamed = renameIngredient(await parsedLines.list(household.id), from, to);
-      if (renamed.length === 0) throw new Error(`No parsed line uses "${from}". Check list_ingredients for the exact name.`);
+      const { lines, entries, known } = await loadIngredients(household.id);
+      const renamed = renameIngredient(lines, from, to);
+      if (renamed.length === 0 && !known.has(to)) {
+        throw new Error(`No parsed line uses "${from}", and "${to}" isn't a known ingredient. Check list_ingredients for the exact names.`);
+      }
 
+      const { saved, removedIds } = addAlias(entries, from, to);
       await parsedLines.save(household.id, renamed);
+      await ingredients.save(household.id, saved);
+      await ingredients.remove(household.id, removedIds);
       await decisions.record(household.id, {
         kind: 'ingredient-rename',
         input: renamed.map(({ line }) => formatLine(line)),
@@ -254,7 +303,124 @@ export const createServer = ({
         answer: to,
         by: actingUid,
       });
-      return jsonResult({ renamed: renamed.length, from, to });
+      return jsonResult({ renamed: renamed.length, from, to, alias: normalizeName(from) });
+    },
+  );
+
+  server.registerTool(
+    'remove_alias',
+    {
+      description:
+        "Stop treating a name as another ingredient in new recipes. Lines already merged under the other name stay as they are; fix those one at a time with correct_ingredient_line. Saved as a decision.",
+      inputSchema: z.object({ alias: z.string().min(1).describe('The alias as list_ingredients shows it') }),
+    },
+    async ({ alias }) => {
+      const household = await requireHousehold(households, actingUid);
+      const updated = removeAlias(await ingredients.list(household.id), alias);
+      await ingredients.save(household.id, [updated]);
+      await decisions.record(household.id, {
+        kind: 'alias-removal',
+        input: normalizeName(alias),
+        suggestion: updated.name,
+        answer: null,
+        by: actingUid,
+      });
+      return jsonResult({ removed: normalizeName(alias), from: updated.name });
+    },
+  );
+
+  server.registerTool(
+    'set_buying',
+    {
+      description:
+        'Say how ingredients are bought. "weekly": bought for the recipes that need it. "staple": usually on hand and not bought every week, so the list asks before buying it. "never": never bought on its own, like water, or because it comes with another ingredient, like adobo sauce from the can of chipotle peppers. Saved as a decision.',
+      inputSchema: z.object({
+        names: IngredientNames,
+        buying: z.enum(BUYING),
+        comesWith: z
+          .string()
+          .min(1)
+          .optional()
+          .describe('Only with "never": the ingredient it comes with, as list_ingredients shows it'),
+      }),
+    },
+    async ({ names, buying, comesWith }) => {
+      const household = await requireHousehold(households, actingUid);
+      const { entries, known } = await loadIngredients(household.id);
+      const unknown = [...names, ...(comesWith ? [comesWith] : [])].filter((name) => !known.has(name));
+      if (unknown.length > 0) throw new Error(`Not known ingredients: ${unknown.join(', ')}. Check list_ingredients for the exact names.`);
+      if (comesWith && buying !== 'never') throw new Error('comesWith only goes with "never".');
+
+      const saved = setBuying(entries, names, buying, comesWith ?? null);
+      await ingredients.save(household.id, saved);
+      await decisions.record(household.id, {
+        kind: 'ingredient-buying',
+        input: saved.map(({ name }) => name),
+        suggestion: Object.fromEntries(saved.map(({ name }) => [name, entries.find((entry) => entry.name === name)?.buying ?? null])),
+        answer: { buying, comesWith: comesWith ?? null },
+        by: actingUid,
+      });
+      return jsonResult({ buying, ...(comesWith && { comesWith }), names: saved.map(({ name }) => name) });
+    },
+  );
+
+  server.registerTool(
+    'read_notes',
+    {
+      description:
+        "Read the household's notes: long-term rules and facts that don't fit a tool, such as \"no cilantro for Jeana\" or \"we cook with broth, not wine\". Without a path, returns every note.",
+      inputSchema: z.object({ path: NotePath.optional().describe('One note, such as "ingredients.md"') }),
+    },
+    async ({ path }) => {
+      const household = await requireHousehold(households, actingUid);
+      const all = (await notes.list(household.id)).sort((a, b) => a.path.localeCompare(b.path));
+      if (!path) return jsonResult(all);
+      const note = all.find((candidate) => candidate.path === path);
+      if (!note) throw new Error(`No note at "${path}". Notes: ${all.map((candidate) => candidate.path).join(', ') || 'none yet'}.`);
+      return jsonResult(note);
+    },
+  );
+
+  server.registerTool(
+    'write_note',
+    {
+      description: `Create or replace a household note. It replaces the whole note, so read it first and send the full text. Notes in ${INGREDIENT_NOTES}.md or under ${INGREDIENT_NOTES}/ are rules for turning recipe lines into groceries, and the parser follows them for new lines. Other topics get their own path, such as planning.md or stores/kroger.md. Saved as a decision.`,
+      inputSchema: z.object({ path: NotePath, content: NoteContent }),
+    },
+    async ({ path, content }) => {
+      const household = await requireHousehold(households, actingUid);
+      const previous = (await notes.list(household.id)).find((note) => note.path === path);
+      await notes.save(household.id, { path, content, updatedBy: actingUid });
+      await decisions.record(household.id, {
+        kind: 'note-write',
+        input: path,
+        suggestion: previous?.content ?? null,
+        answer: content,
+        by: actingUid,
+      });
+      return jsonResult({ path, created: !previous });
+    },
+  );
+
+  server.registerTool(
+    'delete_note',
+    {
+      description: 'Delete a household note. Its last text is kept in the decision record.',
+      inputSchema: z.object({ path: NotePath }),
+    },
+    async ({ path }) => {
+      const household = await requireHousehold(households, actingUid);
+      const previous = (await notes.list(household.id)).find((note) => note.path === path);
+      if (!previous) throw new Error(`No note at "${path}".`);
+      await notes.remove(household.id, path);
+      await decisions.record(household.id, {
+        kind: 'note-delete',
+        input: path,
+        suggestion: previous.content,
+        answer: null,
+        by: actingUid,
+      });
+      return jsonResult({ deleted: path });
     },
   );
 

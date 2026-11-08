@@ -23,6 +23,15 @@ describe('parsePrompt', () => {
     );
   });
 
+  it("puts the household's rules before the known names, only when there are some", () => {
+    const prompt = parsePrompt('Tacos', lines, ['garlic'], '[ingredients.md]\nWe cook with broth, not wine.');
+
+    expect(prompt).toContain(
+      'Recipe: Tacos\nHousehold rules for turning recipe lines into groceries:\n[ingredients.md]\nWe cook with broth, not wine.\nKnown ingredient names: garlic',
+    );
+    expect(parsePrompt('Tacos', lines, ['garlic'])).not.toContain('Household rules');
+  });
+
   it('says when no names are known yet', () => {
     expect(parsePrompt('Tacos', lines, [])).toContain('Known ingredient names: none yet');
   });

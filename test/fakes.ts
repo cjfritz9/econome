@@ -1,5 +1,7 @@
 import { lineKey } from '../src/core/ingredient-lines.ts';
 import type { Household } from '../src/data/household.ts';
+import type { IngredientEntry, IngredientRegistry } from '../src/data/ingredients.ts';
+import type { Note, Notes } from '../src/data/notes.ts';
 import type { ParsedLine, ParsedLines } from '../src/data/parsed-lines.ts';
 import type { Ingredient, Recipe } from '../src/data/recipes.ts';
 import type { Claude } from '../src/llm/claude.ts';
@@ -59,4 +61,43 @@ export const answeringClaude = (answer: (prompt: string) => unknown) => {
     },
   };
   return { claude, prompts };
+};
+
+export const entry = (name: string, overrides: Partial<IngredientEntry> = {}): IngredientEntry => ({
+  id: name.replace(/ /g, '-'),
+  name,
+  aliases: [],
+  buying: null,
+  comesWith: null,
+  ...overrides,
+});
+
+export const memoryIngredients = (initial: IngredientEntry[] = []) => {
+  const stored = new Map(initial.map((saved) => [saved.id, saved]));
+  const store: IngredientRegistry = {
+    list: async () => [...stored.values()],
+    save: async (_householdId, entries) => {
+      for (const saved of entries) stored.set(saved.id, saved);
+    },
+    remove: async (_householdId, ids) => {
+      for (const id of ids) stored.delete(id);
+    },
+  };
+  return { store, stored };
+};
+
+export const note = (path: string, content: string): Note => ({ path, content, updatedBy: 'cj', updatedAt: '2026-11-08T12:00:00.000Z' });
+
+export const memoryNotes = (initial: Note[] = []) => {
+  const stored = new Map(initial.map((saved) => [saved.path, saved]));
+  const store: Notes = {
+    list: async () => [...stored.values()],
+    save: async (_householdId, saved) => {
+      stored.set(saved.path, { ...saved, updatedAt: '2026-11-08T12:00:00.000Z' });
+    },
+    remove: async (_householdId, path) => {
+      stored.delete(path);
+    },
+  };
+  return { store, stored };
 };

@@ -1,4 +1,6 @@
 import type { Household } from '../data/household.ts';
+import { aliasMap, withAliases, type IngredientEntry, type IngredientRegistry } from '../data/ingredients.ts';
+import { asRules, INGREDIENT_NOTES, notesAbout, type Notes } from '../data/notes.ts';
 import type { ParsedLine, ParsedLines } from '../data/parsed-lines.ts';
 import type { Recipe } from '../data/recipes.ts';
 import { SpendCapError, type Claude } from '../llm/claude.ts';
@@ -15,12 +17,24 @@ export interface ParseRun {
 }
 
 export const parseRecipes = async (
-  { claude, parsedLines }: { claude: Claude; parsedLines: ParsedLines },
+  {
+    claude,
+    parsedLines,
+    ingredients,
+    notes,
+  }: { claude: Claude; parsedLines: ParsedLines; ingredients: IngredientRegistry; notes: Notes },
   household: Household,
   recipes: Recipe[],
   { reparse = false }: { reparse?: boolean } = {},
 ): Promise<ParseRun> => {
-  const lines = new Map((await parsedLines.list(household.id)).map((parsed) => [parsed.key, parsed]));
+  const [stored, entries, allNotes] = await Promise.all([
+    parsedLines.list(household.id),
+    ingredients.list(household.id),
+    notes.list(household.id),
+  ]);
+  const rules = asRules(notesAbout(allNotes, INGREDIENT_NOTES));
+  const lines = new Map(stored.map((parsed) => [parsed.key, parsed]));
+  const aliases = aliasMap(entries);
   const pending = new Set(
     recipes
       .flatMap((recipe) => uniqueLines(recipe).map(({ key }) => key))
@@ -38,8 +52,8 @@ export const parseRecipes = async (
     if (missing.length === 0) continue;
 
     try {
-      const parsed = (await parseLines(claude, household, recipe.title, missing, [...known].sort())).map(
-        (entry): ParsedLine => ({ ...entry, source: 'claude' }),
+      const parsed = (await parseLines(claude, household, recipe.title, missing, [...known].sort(), rules)).map(
+        (entry): ParsedLine => ({ ...entry, parse: withAliases(entry.parse, aliases), source: 'claude' }),
       );
       await parsedLines.save(household.id, parsed);
       for (const entry of parsed) {
@@ -76,4 +90,10 @@ export const unsureLines = (recipes: Recipe[], lines: Map<string, ParsedLine>) =
     }
   }
   return [...unsure.values()];
+};
+
+export const undecidedIngredients = (recipes: Recipe[], lines: Map<string, ParsedLine>, entries: IngredientEntry[]) => {
+  const decided = new Set(entries.filter(({ buying }) => buying !== null).map(({ name }) => name));
+  const used = recipes.flatMap((recipe) => uniqueLines(recipe).map(({ key }) => lines.get(key)?.parse.ingredient));
+  return [...new Set(used)].filter((name): name is string => name !== undefined && !decided.has(name)).sort();
 };
