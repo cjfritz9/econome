@@ -36,6 +36,20 @@ const HungryrootMealSchema = z.object({
 
 const orEmpty = <T>(items: T[] | null | undefined) => items ?? [];
 
+const CartLineSchema = z.object({ ingredient: z.string(), upc: z.string(), quantity: z.number().int().positive() });
+
+export const KrogerSectionSchema = z.object({
+  approved: z.object({ lines: z.array(CartLineSchema), listHash: z.string(), by: z.string() }).nullable().default(null),
+  journal: z
+    .record(z.string(), z.object({ quantity: z.number(), status: z.enum(['sent', 'unknown', 'failed']), message: z.string().nullable() }))
+    .default({}),
+  checkedOut: z.object({ by: z.string(), lines: z.array(CartLineSchema) }).nullable().default(null),
+});
+
+export type KrogerSection = z.infer<typeof KrogerSectionSchema>;
+export type CartLine = z.infer<typeof CartLineSchema>;
+export const emptyKrogerSection = (): KrogerSection => ({ approved: null, journal: {}, checkedOut: null });
+
 const WeekDocSchema = z.object({
   meals: z.array(PlannedMealSchema).nullish().transform(orEmpty),
   hungryroot: z.array(HungryrootMealSchema).nullish().transform(orEmpty),
@@ -45,6 +59,7 @@ const WeekDocSchema = z.object({
     .nullish()
     .transform((have) => have ?? {}),
   boxLocked: z.boolean().nullish().transform((locked) => locked ?? false),
+  kroger: KrogerSectionSchema.nullish().transform((section) => section ?? emptyKrogerSection()),
 });
 
 export type PlannedMeal = z.infer<typeof PlannedMealSchema>;
@@ -73,6 +88,7 @@ export interface Weeks {
   saveHave: (householdId: string, weekId: string, have: Record<string, boolean>) => Promise<void>;
   saveHungryroot: (householdId: string, weekId: string, hungryroot: HungryrootMeal[], confirmedBy: string) => Promise<void>;
   lockBox: (householdId: string, weekId: string, lockedBy: string) => Promise<void>;
+  saveKroger: (householdId: string, weekId: string, section: KrogerSection) => Promise<void>;
 }
 
 export interface PlannedWeek {
@@ -82,9 +98,10 @@ export interface PlannedWeek {
   targets: MealTargets;
   have: Record<string, boolean>;
   boxLocked: boolean;
+  kroger: KrogerSection;
 }
 
-export const emptyWeek = () => ({ meals: [], hungryroot: [], targets: {}, have: {}, boxLocked: false });
+export const emptyWeek = () => ({ meals: [], hungryroot: [], targets: {}, have: {}, boxLocked: false, kroger: emptyKrogerSection() });
 
 export const loadWeeks = async (weeks: Weeks, householdId: string, wanted: CalendarWeek[]): Promise<PlannedWeek[]> => {
   const docs = await weeks.findWeekDocs(

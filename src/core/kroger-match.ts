@@ -1,7 +1,7 @@
 import type { IngredientEntry } from '../data/ingredients.ts';
-import { forIngredient, type RememberedProduct } from '../data/product-memory.ts';
+import { forIngredient, reviewOf, type RememberedProduct } from '../data/product-memory.ts';
 import type { KrogerProduct } from '../sources/kroger.ts';
-import { packagesFor } from './packages.ts';
+import { packagesCovering, packagesFor } from './packages.ts';
 import type { ListItem } from './shopping-list.ts';
 import { checkVegan, type ConcernTally, type VeganCheck } from './vegan.ts';
 
@@ -33,11 +33,21 @@ export interface MatchedItem {
 export const inStock = ({ stock }: KrogerProduct) => stock !== OUT_OF_STOCK;
 
 export const veganCheckFor = (product: KrogerProduct, memory: RememberedProduct[], tallies: Map<string, ConcernTally>) => {
-  const reviewed = memory.find(({ upc }) => upc === product.upc)?.vegan;
-  return checkVegan(product.label, tallies, reviewed ?? undefined);
+  return checkVegan(product.label, tallies, reviewOf(memory, product.upc));
 };
 
-const view = (product: KrogerProduct, item: ListItem, entry: IngredientEntry | undefined, vegan: VeganCheck): ProductView => ({
+const packagesOf = (product: KrogerProduct, item: ListItem, entry: IngredientEntry | undefined, covers: number | null) => {
+  if (!item.amount) return null;
+  return covers ? packagesCovering(item.amount, covers) : packagesFor(item.amount, product.size, entry ?? NO_WEIGHTS);
+};
+
+const view = (
+  product: KrogerProduct,
+  item: ListItem,
+  entry: IngredientEntry | undefined,
+  vegan: VeganCheck,
+  covers: number | null,
+): ProductView => ({
   upc: product.upc,
   description: product.description,
   brand: product.brand,
@@ -48,7 +58,7 @@ const view = (product: KrogerProduct, item: ListItem, entry: IngredientEntry | u
   aisle: product.aisle,
   link: product.link,
   vegan: { verdict: vegan.verdict, reasons: vegan.reasons },
-  packages: item.amount ? packagesFor(item.amount, product.size, entry ?? NO_WEIGHTS) : null,
+  packages: packagesOf(product, item, entry, covers),
 });
 
 export const matchItem = (
@@ -62,7 +72,10 @@ export const matchItem = (
   },
 ): MatchedItem => {
   const notes: string[] = [];
-  const show = (product: KrogerProduct) => view(product, item, entry, veganCheckFor(product, memory, tallies));
+  const show = (product: KrogerProduct) => {
+    const covers = memory.find(({ upc, ingredient }) => upc === product.upc && ingredient === item.ingredient)?.covers ?? null;
+    return view(product, item, entry, veganCheckFor(product, memory, tallies), covers);
+  };
   const usable = (upc: string) => {
     const product = remembered.get(upc);
     return product && inStock(product) ? product : null;

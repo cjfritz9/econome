@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { matchItem } from '../../src/core/kroger-match.ts';
 import type { ListItem } from '../../src/core/shopping-list.ts';
-import { blankMemory, type RememberedProduct } from '../../src/data/product-memory.ts';
+import { blankMemory, rememberedId, type RememberedProduct } from '../../src/data/product-memory.ts';
 import type { KrogerProduct } from '../../src/sources/kroger.ts';
+import { ingredientsHash } from '../../src/core/vegan.ts';
 import { entry } from '../fakes.ts';
 
 const product = (upc: string, overrides: Partial<KrogerProduct> = {}): KrogerProduct => ({
@@ -68,6 +69,30 @@ describe('matchItem', () => {
     expect(matched.candidates.map(({ upc }) => upc)).toEqual(['0003']);
   });
 
+  it('counts packages by what the household said one covers', () => {
+    const bunch: RememberedProduct = { ...remembered('0005', 'preferred'), covers: 7 };
+    const onions = { ...item, ingredient: 'extra-firm tofu', amount: { value: 2.83, unit: 'piece' as const } };
+    const matched = matchItem(onions, {
+      entry: entry('extra-firm tofu'),
+      memory: [bunch],
+      remembered: new Map([['0005', product('0005', { size: '1 each' })]]),
+      found: [],
+      tallies: new Map(),
+    });
+
+    expect(matched.pick?.packages).toBe(1);
+  });
+
+  it("uses the household's vegan review of a product, kept apart from its ingredient choices", () => {
+    const flagged = product('0007', { label: { ingredients: 'Water, Natural Flavors', categories: [], declarations: [], contains: [], mayContain: [] } });
+    const review: RememberedProduct = {
+      ...blankMemory('0007', 'uid1'),
+      vegan: { vegan: true, concerns: ['natural flavors'], ingredientsHash: ingredientsHash('Water, Natural Flavors'), by: 'uid1' },
+    };
+
+    expect(match([review], [], [flagged]).candidates[0]?.vegan).toEqual({ verdict: 'vegan', reasons: ['you reviewed this product'] });
+  });
+
   it('names a gap when the store has nothing', () => {
     expect(match([], []).notes).toEqual(['Nothing found at this store: a gap for Whole Foods or an online order.']);
   });
@@ -76,5 +101,13 @@ describe('matchItem', () => {
     expect(match([remembered('0001', 'preferred')], [], [product('0003')]).notes).toEqual([
       "Your usual product (0001) isn't sold at this store now.",
     ]);
+  });
+});
+
+describe('rememberedId', () => {
+  it('keeps a product apart for each ingredient, and its vegan review apart from both', () => {
+    expect(rememberedId('kroger', '0001115227641', 'furikake')).toBe('kroger_0001115227641_furikake');
+    expect(rememberedId('kroger', '0001115227641', 'nori')).toBe('kroger_0001115227641_nori');
+    expect(rememberedId('kroger', '0001115227641')).toBe('kroger_0001115227641');
   });
 });

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { weekOf } from '../../src/core/calendar.ts';
 import type { Recipe } from '../../src/data/recipes.ts';
 import {
+  emptyKrogerSection,
   lastPlannedDates,
   loadWeeks,
   planMeals,
@@ -68,6 +69,7 @@ describe('loadWeeks', () => {
     saveHave: async () => {},
     saveHungryroot: async () => {},
     lockBox: async () => {},
+    saveKroger: async () => {},
   });
 
   it('returns every week asked for, empty when nothing is planned', async () => {
@@ -75,8 +77,8 @@ describe('loadWeeks', () => {
     const loaded = await loadWeeks(store({ '2026-W46': { meals: [meal('tofu-steaks')] } }), 'h1', weeks);
 
     expect(loaded).toEqual([
-      { week: weeks[0], meals: [meal('tofu-steaks')], hungryroot: [], targets: {}, have: {}, boxLocked: false },
-      { week: weeks[1], meals: [], hungryroot: [], targets: {}, have: {}, boxLocked: false },
+      { week: weeks[0], meals: [meal('tofu-steaks')], hungryroot: [], targets: {}, have: {}, boxLocked: false, kroger: emptyKrogerSection() },
+      { week: weeks[1], meals: [], hungryroot: [], targets: {}, have: {}, boxLocked: false, kroger: emptyKrogerSection() },
     ]);
   });
 

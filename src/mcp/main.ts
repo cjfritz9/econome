@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import Anthropic from '@anthropic-ai/sdk';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { loadConfig } from '../config.ts';
@@ -18,7 +19,11 @@ import { firestoreHungryrootRecipes } from '../data/firestore-hungryroot-recipes
 import { firestoreProductMemory, firestoreVeganLine } from '../data/firestore-product-memory.ts';
 import { fdcClient } from '../sources/fdc.ts';
 import { hungryrootCatalog } from '../sources/hungryroot.ts';
+import { krogerSession } from '../core/kroger-session.ts';
+import { tokenKey } from '../core/secrets.ts';
+import { firestoreStoreAccounts } from '../data/firestore-store-accounts.ts';
 import { krogerClient } from '../sources/kroger.ts';
+import { krogerAccount } from '../sources/kroger-account.ts';
 import { createServer, SERVER_VERSION } from './server.ts';
 
 const main = async () => {
@@ -26,6 +31,12 @@ const main = async () => {
   const { db, auth } = connectFirebase(config.firebaseProjectId);
   const actingUser = await auth.getUserByEmail(config.actingEmail);
   const spend = firestoreSpend(db);
+  const storeAccounts = firestoreStoreAccounts(db);
+  const account = config.kroger && krogerAccount({ ...config.kroger, version: SERVER_VERSION });
+  const session =
+    account && config.tokenKey
+      ? krogerSession({ account, accounts: storeAccounts, key: tokenKey(config.tokenKey), holder: `mcp-${process.pid}-${randomUUID()}` })
+      : null;
 
   const server = createServer({
     access: firestoreAccess(db),
@@ -42,6 +53,9 @@ const main = async () => {
     kroger: config.kroger && krogerClient({ ...config.kroger, version: SERVER_VERSION }),
     productMemory: firestoreProductMemory(db),
     veganLine: firestoreVeganLine(db),
+    storeAccounts,
+    krogerSession: session,
+    krogerAccount: account,
     decisions: firestoreDecisions(db),
     claude: createClaude({ send: anthropicSender(new Anthropic({ apiKey: config.anthropicApiKey })), ledger: spend }),
     actingUid: actingUser.uid,

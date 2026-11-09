@@ -43,6 +43,10 @@ describe('packagesFor', () => {
     expect(packagesFor({ value: 5, unit: 'cup' }, '32 fl oz', weights)).toBe(2);
   });
 
+  it('counts one product per can, jar or block when the sizes can\'t be compared', () => {
+    expect(packagesFor({ value: 1, unit: 'can' }, '13.5 fl oz', { gramsPerMl: null, unitWeights: {} })).toBe(1);
+  });
+
   it("doesn't guess without a way to compare", () => {
     expect(packagesFor({ value: 4, unit: 'clove' }, '1 ct', weights)).toBeNull();
     expect(packagesFor({ value: 2, unit: 'tsp' }, '1 lb', { gramsPerMl: null, unitWeights: {} })).toBeNull();

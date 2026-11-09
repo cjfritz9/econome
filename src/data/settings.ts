@@ -38,6 +38,7 @@ export const SettingsSchema = z.object({
         .regex(/^[0-9A-Za-z]{8}$/, 'A Kroger store id has 8 characters')
         .optional()
         .describe('The Kroger store the household shops, from find_kroger_stores'),
+      modality: z.enum(['PICKUP', 'DELIVERY']).optional().describe("How the Kroger cart's items are fulfilled; Kroger's default is PICKUP"),
     })
     .optional(),
   planningDirective: NotePath.refine((path) => path.startsWith('directives/'), 'A planning directive is a note under directives/')

@@ -7,6 +7,7 @@ const EnvSchema = z.object({
   FDC_API_KEY: z.string().min(1),
   KROGER_CLIENT_ID: z.string().min(1).optional(),
   KROGER_CLIENT_SECRET: z.string().min(1).optional(),
+  ECONOME_TOKEN_KEY: z.string().min(1).optional(),
 });
 
 export interface Config {
@@ -15,6 +16,7 @@ export interface Config {
   anthropicApiKey: string;
   fdcApiKey: string;
   kroger: { clientId: string; clientSecret: string } | null;
+  tokenKey: string | null;
 }
 
 export const loadConfig = (env: NodeJS.ProcessEnv): Config => {
@@ -31,5 +33,6 @@ export const loadConfig = (env: NodeJS.ProcessEnv): Config => {
       parsed.data.KROGER_CLIENT_ID && parsed.data.KROGER_CLIENT_SECRET
         ? { clientId: parsed.data.KROGER_CLIENT_ID, clientSecret: parsed.data.KROGER_CLIENT_SECRET }
         : null,
+    tokenKey: parsed.data.ECONOME_TOKEN_KEY ?? null,
   };
 };
