@@ -14,8 +14,12 @@ import { firestoreWeeks } from '../data/firestore-weeks.ts';
 import { anthropicSender } from '../llm/anthropic.ts';
 import { createClaude } from '../llm/claude.ts';
 import { logger } from '../logger.ts';
+import { firestoreHungryrootRecipes } from '../data/firestore-hungryroot-recipes.ts';
+import { firestoreProductMemory, firestoreVeganLine } from '../data/firestore-product-memory.ts';
 import { fdcClient } from '../sources/fdc.ts';
-import { createServer } from './server.ts';
+import { hungryrootCatalog } from '../sources/hungryroot.ts';
+import { krogerClient } from '../sources/kroger.ts';
+import { createServer, SERVER_VERSION } from './server.ts';
 
 const main = async () => {
   const config = loadConfig(process.env);
@@ -33,6 +37,11 @@ const main = async () => {
     ingredients: firestoreIngredients(db),
     notes: firestoreNotes(db),
     fdc: fdcClient(config.fdcApiKey),
+    hungryroot: hungryrootCatalog(SERVER_VERSION),
+    hungryrootRecipes: firestoreHungryrootRecipes(db),
+    kroger: config.kroger && krogerClient({ ...config.kroger, version: SERVER_VERSION }),
+    productMemory: firestoreProductMemory(db),
+    veganLine: firestoreVeganLine(db),
     decisions: firestoreDecisions(db),
     claude: createClaude({ send: anthropicSender(new Anthropic({ apiKey: config.anthropicApiKey })), ledger: spend }),
     actingUid: actingUser.uid,

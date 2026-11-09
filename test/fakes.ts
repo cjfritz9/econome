@@ -78,6 +78,7 @@ export const entry = (name: string, overrides: Partial<IngredientEntry> = {}): I
   comesWith: null,
   food: null,
   fdcQuery: null,
+  storeSearch: null,
   gramsPerMl: null,
   unitWeights: {},
   ...overrides,

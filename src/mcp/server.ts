@@ -1,10 +1,11 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import { chooseWeek, householdToday, Weekday, weeksEndingWith } from '../core/calendar.ts';
+import { chooseWeek, householdToday, openBoxWeek, Weekday, weeksEndingWith } from '../core/calendar.ts';
 import { matchFoods } from '../core/food-matching.ts';
 import { recipeNutrition } from '../core/nutrition.ts';
 import { formatLine, normalizeText, recipesWithLine } from '../core/ingredient-lines.ts';
 import { parseRecipes, undecidedIngredients, unsureLines } from '../core/parsing.ts';
+import { boxCandidates, findRecipe, rankCandidates, recipeRecord } from '../core/hungryroot-box.ts';
 import { buildList } from '../core/shopping-list.ts';
 import { ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
 import type { Decisions } from '../data/decisions.ts';
@@ -22,6 +23,7 @@ import {
   withUnitWeight,
   type IngredientRegistry,
 } from '../data/ingredients.ts';
+import type { HungryrootRecipes } from '../data/hungryroot-recipes.ts';
 import { INGREDIENT_NOTES, NoteContent, NotePath, type Notes } from '../data/notes.ts';
 import { correctLine, indexByLine, ingredientIndex, renameIngredient, withRecipes, type ParsedLines } from '../data/parsed-lines.ts';
 import { NOT_A_MEAL_TAG, readLibrary, withTag, type Recipes } from '../data/recipes.ts';
@@ -40,6 +42,13 @@ import {
 import type { Claude, SpendLedger } from '../llm/claude.ts';
 import { LineParseSchema, UNITS } from '../llm/parse-ingredients.ts';
 import type { FoodData } from '../sources/fdc.ts';
+import { recipeLink, type HungryrootCatalog } from '../sources/hungryroot.ts';
+import type { Kroger } from '../sources/kroger.ts';
+import type { ProductMemory, VeganLine } from '../data/product-memory.ts';
+import { registerKrogerTools } from './kroger-tools.ts';
+import { jsonResult, WeekDate } from './shared.ts';
+
+export const SERVER_VERSION = '0.19.0';
 
 export interface ServerDeps {
   access: Access;
@@ -51,6 +60,11 @@ export interface ServerDeps {
   ingredients: IngredientRegistry;
   notes: Notes;
   fdc: FoodData;
+  hungryroot: HungryrootCatalog;
+  hungryrootRecipes: HungryrootRecipes;
+  kroger: Kroger | null;
+  productMemory: ProductMemory;
+  veganLine: VeganLine;
   decisions: Decisions;
   claude: Claude;
   actingUid: string;
@@ -71,6 +85,8 @@ A recipe's ingredient list is the source of truth, and Économe never reads its 
 
 Read the notes with read_notes before planning a week or settling an ingredient question. Read the week with get_week before planning it: its coverage counts servings, one person's meal each, against the household's meal targets, with the Hungryroot box's recipes first and dinner leftovers as lunches, and leftToPlan says what's still to fill. Planning and recipe suggestions follow the household's planning directive, the note get_household names as settings.planningDirective. It's always in effect; the household changes it by editing that note with write_note, or swaps it by pointing planningDirective at another note under directives/ with update_settings. Suggested swaps must make sense in the dish, and are only suggestions until someone says yes.
 
+The Hungryroot box is planned too: suggest_hungryroot_box finds candidates for the box still open before its cutoff, you choose by the directive and the household confirms or picks others, set_hungryroot_box saves what it confirmed with any swaps, and before the cutoff you show the box from get_week as a checklist for the household to compare with its cart in the Hungryroot app, then lock_hungryroot_box once it says the selections are locked in. Économe never touches the Hungryroot account itself.
+
 Nutrition is an estimate: each ingredient is matched once to a USDA FoodData Central food with match_foods. A wrong match is fixed with search_foods and set_food, a name FoodData Central spells differently (lemongrass as "lemon grass") with set_food_search, and a wrong weight (one cup, one piece, one can) with set_unit_weight.`;
 
 const IngredientNames = z
@@ -78,18 +94,7 @@ const IngredientNames = z
   .min(1)
   .describe('Ingredient names exactly as list_ingredients shows them');
 
-const WeekDate = z.iso
-  .date()
-  .optional()
-  .describe(
-    'Any date in the week, as YYYY-MM-DD. Weeks run Monday to Sunday. Leave it out for the coming week, the one that starts next Monday.',
-  );
-
-const jsonResult = (value: unknown) => ({
-  content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
-});
-
-const weekResult = ({ week, meals, hungryroot, targets: own }: PlannedWeek, household: Household) => {
+const weekResult = ({ week, meals, hungryroot, targets: own, boxLocked }: PlannedWeek, household: Household) => {
   const targets = { ...household.settings.mealTargets, ...own };
   return {
     week: week.id,
@@ -97,6 +102,7 @@ const weekResult = ({ week, meals, hungryroot, targets: own }: PlannedWeek, hous
     end: week.end,
     meals,
     hungryroot,
+    ...(hungryroot.length > 0 && { boxLocked }),
     targets,
     coverage: weekCoverage({ meals, hungryroot }, household.members.length, targets),
   };
@@ -116,11 +122,16 @@ export const createServer = ({
   ingredients,
   notes,
   fdc,
+  hungryroot,
+  hungryrootRecipes,
+  kroger,
+  productMemory,
+  veganLine,
   decisions,
   claude,
   actingUid,
 }: ServerDeps) => {
-  const server = new McpServer({ name: 'econome', version: '0.16.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'econome', version: SERVER_VERSION }, { instructions: INSTRUCTIONS });
 
   const member = async () => {
     await requireFeature(access, actingUid, ECONOME_FEATURE);
@@ -375,6 +386,147 @@ export const createServer = ({
         ...Object.fromEntries(need.map((name) => [name, false])),
       });
       return jsonResult((await weekList(household, date, { parse: false })).result);
+    },
+  );
+
+  const RECENT_BOX_WEEKS = 4;
+  const TAGS_SHOWN = ['Tofu + Tempeh (Primary)', 'Beans + Lentils (Primary)', "'Meat' Alternative (Primary)", 'Lunch-Friendly', 'Spicy'];
+  const dollars = (value: number) => Math.round(value * 100) / 100;
+
+  server.registerTool(
+    'suggest_hungryroot_box',
+    {
+      description:
+        "Find candidates for a week's Hungryroot box: Hungryroot's high-protein vegan recipes as 4 servings (a 4-serving recipe, or a 2-serving one added twice when it has no cheaper 4-serving version), read now from its public catalog and kept in memory only. Leaves out recipes from the last four weeks' boxes. Sorted by protein per calorie; each comes with credits, dollars at the plan's rate, nutrition per serving, its link, and its refined starch (rice, bread, tortillas, pasta) with the carbs left if that starch is swapped out, an estimate. Choose the box from these by the planning directive and the household's notes, varying the dishes, and suggest starch swaps that suit each dish. Present each pick with its numbers; the household confirms with set_hungryroot_box.",
+      inputSchema: z.object({
+        week: WeekDate.describe("Any date in the delivery week. Left out, it's the next box whose cutoff hasn't passed."),
+        minProtein: z.number().nonnegative().optional().describe('Least protein per serving, in grams (High protein already means 25 or more)'),
+        maxCarbs: z.number().nonnegative().optional().describe('Most carbs per serving, in grams, after swapping out the refined starch'),
+        exclude: z.array(z.string().min(1)).optional().describe('Recipe names to leave out'),
+        limit: z.number().int().min(1).max(50).optional().describe('How many candidates to return; 25 if left out'),
+      }),
+    },
+    async ({ week: date, minProtein, maxCarbs, exclude = [], limit = 25 }) => {
+      const household = await member();
+      const { hungryroot: plan = {}, timezone } = household.settings;
+      const week = date ? chooseWeek(timezone, date) : openBoxWeek(timezone, plan.cutoffDay);
+      const [forFour, forTwo, products, recent] = await Promise.all([
+        hungryroot.veganRecipes(4, { highProtein: true }),
+        hungryroot.veganRecipes(2, { highProtein: true }),
+        hungryroot.products(),
+        loadWeeks(weeks, household.id, weeksEndingWith(week, RECENT_BOX_WEEKS + 1).slice(1)),
+      ]);
+      const recentNames = [...new Set(recent.flatMap(({ hungryroot: box }) => box.map(({ title }) => title)))];
+      const ranked = rankCandidates(boxCandidates(forFour, forTwo, products), {
+        ...(minProtein !== undefined && { minProtein }),
+        ...(maxCarbs !== undefined && { maxCarbs }),
+        exclude: [...exclude, ...recentNames],
+      });
+      const creditUsd = plan.planPriceUsd && plan.planCredits ? plan.planPriceUsd / plan.planCredits : null;
+
+      return jsonResult({
+        week: week.id,
+        recipesWanted: Math.round((plan.boxServings ?? 12) / 4),
+        plan: {
+          credits: plan.planCredits ?? 'not set',
+          ...(creditUsd !== null && { creditUsd: dollars(creditUsd) }),
+          ...(plan.addOnCreditUsd && { addOnCreditUsd: plan.addOnCreditUsd }),
+        },
+        ...(recentNames.length > 0 && { leftOutAsRecent: recentNames }),
+        matching: ranked.length,
+        candidates: ranked.slice(0, limit).map(({ recipe, times, credits, starch, carbsWithoutStarch }) => ({
+          hungryrootId: recipe.id,
+          name: recipe.name,
+          link: recipeLink(recipe.slug),
+          ...(times === 2 ? { servings: '2, added twice' } : { servings: 4 }),
+          credits,
+          ...(creditUsd !== null && { dollars: dollars(credits * creditUsd) }),
+          minutes: recipe.minutes,
+          perServing: recipe.nutrition,
+          tags: recipe.tags.filter((tag) => TAGS_SHOWN.includes(tag)),
+          ...(starch.length > 0 && { starch, carbsWithoutStarch }),
+        })),
+      });
+    },
+  );
+
+  server.registerTool(
+    'set_hungryroot_box',
+    {
+      description:
+        "Save the Hungryroot box the household confirmed for a week: the recipes it chose (from suggest_hungryroot_box or its own picks) with any swaps it made, such as the rice removed and riced cauliflower added. Replaces the week's box and unlocks it until lock_hungryroot_box. Each recipe is kept as a household record from Hungryroot's public catalog (name, link, servings, nutrition, products, steps, and the swaps each week) to import into Mise later. Returns the week with its coverage.",
+      inputSchema: z.object({
+        week: WeekDate.describe("Any date in the delivery week. Left out, it's the next box whose cutoff hasn't passed."),
+        recipes: z
+          .array(
+            z.object({
+              hungryrootId: z.number().int().optional().describe('The id suggest_hungryroot_box gave'),
+              title: z.string().min(1).optional().describe("The recipe's name, when there's no id"),
+              times: z.number().int().min(1).max(4).optional().describe('How many times it was added; 2 for a 2-serving recipe made as 4'),
+              removed: z.array(z.string().min(1)).optional().describe('Items taken out of the recipe in the app'),
+              added: z.array(z.string().min(1)).optional().describe('Items added in their place'),
+            }),
+          )
+          .min(1),
+      }),
+    },
+    async ({ week: date, recipes: chosen }) => {
+      const household = await member();
+      const { timezone, hungryroot: plan = {} } = household.settings;
+      const week = date ? chooseWeek(timezone, date) : openBoxWeek(timezone, plan.cutoffDay);
+      const highProtein = (await Promise.all([4, 2].map((servings) => hungryroot.veganRecipes(servings, { highProtein: true })))).flat();
+      const everyRecipe = async () => (await Promise.all([hungryroot.veganRecipes(4), hungryroot.veganRecipes(2)])).flat();
+      const catalog = chosen.every((choice) => findRecipe(choice, highProtein)) ? highProtein : await everyRecipe();
+
+      const found = chosen.map((choice) => ({ choice, recipe: findRecipe(choice, catalog) }));
+      const missing = found.filter(({ recipe }) => recipe === null).map(({ choice }) => choice.title ?? `id ${choice.hungryrootId}`);
+      if (missing.length > 0) {
+        throw new Error(`These aren't among Hungryroot's vegan recipes: ${missing.join(', ')}. Check the name, or use the id from suggest_hungryroot_box.`);
+      }
+
+      const picks = found.flatMap(({ choice, recipe }) => (recipe ? [{ choice, recipe }] : []));
+      const existing = new Map(
+        (await hungryrootRecipes.find(household.id, picks.map(({ recipe }) => String(recipe.id)))).map((record) => [record.id, record]),
+      );
+      const swapsOf = ({ removed = [], added = [] }: { removed?: string[]; added?: string[] }) => ({ removed, added });
+      await hungryrootRecipes.save(
+        household.id,
+        picks.map(({ choice, recipe }) => recipeRecord(week.id, recipe, swapsOf(choice), existing.get(String(recipe.id)))),
+      );
+      await weeks.saveHungryroot(
+        household.id,
+        week.id,
+        picks.map(({ choice, recipe }) => ({
+          title: recipe.name,
+          servings: recipe.servings * (choice.times ?? 1),
+          hungryrootId: recipe.id,
+          ...(choice.removed?.length && { removed: choice.removed }),
+          ...(choice.added?.length && { added: choice.added }),
+        })),
+        actingUid,
+      );
+      const [saved = { week, ...emptyWeek() }] = await loadWeeks(weeks, household.id, [week]);
+      return jsonResult(weekResult(saved, household));
+    },
+  );
+
+  server.registerTool(
+    'lock_hungryroot_box',
+    {
+      description:
+        "Mark a week's Hungryroot box as locked in, once the household has checked its cart in the Hungryroot app against Économe's record (get_week shows the recipes and swaps) and the selections are final. Changing the box afterwards with set_hungryroot_box or plan_week unlocks it.",
+      inputSchema: z.object({
+        week: WeekDate.describe("Any date in the delivery week. Left out, it's the next box whose cutoff hasn't passed."),
+      }),
+    },
+    async ({ week: date }) => {
+      const household = await member();
+      const { timezone, hungryroot: plan = {} } = household.settings;
+      const week = date ? chooseWeek(timezone, date) : openBoxWeek(timezone, plan.cutoffDay);
+      const [planned] = await loadWeeks(weeks, household.id, [week]);
+      if (!planned || planned.hungryroot.length === 0) throw new Error(`${week.id} has no Hungryroot box yet; confirm one with set_hungryroot_box first.`);
+      await weeks.lockBox(household.id, week.id, actingUid);
+      return jsonResult(weekResult({ ...planned, boxLocked: true }, household));
     },
   );
 
@@ -759,6 +911,20 @@ export const createServer = ({
       return jsonResult({ deleted: path });
     },
   );
+
+  registerKrogerTools(server, {
+    member,
+    kroger,
+    productMemory,
+    veganLine,
+    ingredients,
+    decisions,
+    actingUid,
+    buyList: async (household, date) => {
+      const { week, result } = await weekList(household, date, { parse: false });
+      return { week: week.id, buy: result.buy };
+    },
+  });
 
   return server;
 };

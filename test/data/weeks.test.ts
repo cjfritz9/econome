@@ -66,6 +66,8 @@ describe('loadWeeks', () => {
       weekIds.filter((id) => id in docs).map((id) => ({ id, data: docs[id] })),
     savePlan: async () => {},
     saveHave: async () => {},
+    saveHungryroot: async () => {},
+    lockBox: async () => {},
   });
 
   it('returns every week asked for, empty when nothing is planned', async () => {
@@ -73,8 +75,8 @@ describe('loadWeeks', () => {
     const loaded = await loadWeeks(store({ '2026-W46': { meals: [meal('tofu-steaks')] } }), 'h1', weeks);
 
     expect(loaded).toEqual([
-      { week: weeks[0], meals: [meal('tofu-steaks')], hungryroot: [], targets: {}, have: {} },
-      { week: weeks[1], meals: [], hungryroot: [], targets: {}, have: {} },
+      { week: weeks[0], meals: [meal('tofu-steaks')], hungryroot: [], targets: {}, have: {}, boxLocked: false },
+      { week: weeks[1], meals: [], hungryroot: [], targets: {}, have: {}, boxLocked: false },
     ]);
   });
 

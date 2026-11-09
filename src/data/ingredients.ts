@@ -30,6 +30,7 @@ export const IngredientEntrySchema = z.object({
   comesWith: z.string().nullable(),
   food: FoodMatchSchema.nullable().default(null),
   fdcQuery: z.string().nullable().default(null),
+  storeSearch: z.string().nullable().default(null),
   gramsPerMl: z.number().positive().nullable().default(null),
   unitWeights: z.partialRecord(z.enum(COUNT_UNITS), z.number().positive()).default({}),
 });
@@ -58,6 +59,7 @@ const newEntry = (name: string): IngredientEntry => ({
   comesWith: null,
   food: null,
   fdcQuery: null,
+  storeSearch: null,
   gramsPerMl: null,
   unitWeights: {},
 });
@@ -82,6 +84,11 @@ export const withFood = (
 export const withFdcQuery = (entries: IngredientEntry[], name: string, query: string): IngredientEntry => ({
   ...entryFor(entries, name),
   fdcQuery: query.trim(),
+});
+
+export const withStoreSearch = (entries: IngredientEntry[], name: string, term: string): IngredientEntry => ({
+  ...entryFor(entries, name),
+  storeSearch: term.trim(),
 });
 
 export const withUnitWeight = (entries: IngredientEntry[], name: string, unit: Unit, grams: number): IngredientEntry => {
@@ -173,6 +180,7 @@ export const describeIngredients = (index: { ingredient: string; lines: string[]
       ...(entry && entry.aliases.length > 0 && { aliases: entry.aliases }),
       ...(entry?.food && { food: entry.food.description ?? 'no FDC food' }),
       ...(entry?.fdcQuery && { searchAs: entry.fdcQuery }),
+      ...(entry?.storeSearch && { storeSearchAs: entry.storeSearch }),
       ...(weights.length > 0 && { weights }),
       lines: linesOf.get(ingredient) ?? [],
     };

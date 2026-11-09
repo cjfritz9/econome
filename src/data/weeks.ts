@@ -29,6 +29,9 @@ const HungryrootMealSchema = z.object({
   servings: z.number().positive(),
   day: Weekday.optional(),
   slot: MealSlot.optional(),
+  hungryrootId: z.number().optional(),
+  removed: z.array(z.string()).optional(),
+  added: z.array(z.string()).optional(),
 });
 
 const orEmpty = <T>(items: T[] | null | undefined) => items ?? [];
@@ -41,6 +44,7 @@ const WeekDocSchema = z.object({
     .record(z.string(), z.boolean())
     .nullish()
     .transform((have) => have ?? {}),
+  boxLocked: z.boolean().nullish().transform((locked) => locked ?? false),
 });
 
 export type PlannedMeal = z.infer<typeof PlannedMealSchema>;
@@ -67,6 +71,8 @@ export interface Weeks {
   findWeekDocs: (householdId: string, weekIds: string[]) => Promise<WeekDoc[]>;
   savePlan: (householdId: string, weekId: string, plan: WeekPlan, plannedBy: string) => Promise<void>;
   saveHave: (householdId: string, weekId: string, have: Record<string, boolean>) => Promise<void>;
+  saveHungryroot: (householdId: string, weekId: string, hungryroot: HungryrootMeal[], confirmedBy: string) => Promise<void>;
+  lockBox: (householdId: string, weekId: string, lockedBy: string) => Promise<void>;
 }
 
 export interface PlannedWeek {
@@ -75,9 +81,10 @@ export interface PlannedWeek {
   hungryroot: HungryrootMeal[];
   targets: MealTargets;
   have: Record<string, boolean>;
+  boxLocked: boolean;
 }
 
-export const emptyWeek = () => ({ meals: [], hungryroot: [], targets: {}, have: {} });
+export const emptyWeek = () => ({ meals: [], hungryroot: [], targets: {}, have: {}, boxLocked: false });
 
 export const loadWeeks = async (weeks: Weeks, householdId: string, wanted: CalendarWeek[]): Promise<PlannedWeek[]> => {
   const docs = await weeks.findWeekDocs(

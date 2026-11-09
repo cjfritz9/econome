@@ -31,6 +31,15 @@ export const SettingsSchema = z.object({
   mealTargets: MealTargets.optional().describe(
     "Servings to plan in a usual week for each meal, one serving being one person's meal. Any week can set its own with plan_week",
   ),
+  kroger: z
+    .object({
+      locationId: z
+        .string()
+        .regex(/^[0-9A-Za-z]{8}$/, 'A Kroger store id has 8 characters')
+        .optional()
+        .describe('The Kroger store the household shops, from find_kroger_stores'),
+    })
+    .optional(),
   planningDirective: NotePath.refine((path) => path.startsWith('directives/'), 'A planning directive is a note under directives/')
     .optional()
     .describe(`The note under directives/ that planning and recipe suggestions follow (default ${DEFAULT_PLANNING_DIRECTIVE})`),
@@ -43,6 +52,15 @@ export const SettingsSchema = z.object({
         .regex(/^([01]\d|2[0-3]):[0-5]\d$/, 'Use 24-hour HH:MM')
         .optional()
         .describe("Time the shopping window closes, 24-hour HH:MM in the household's time zone"),
+      planPriceUsd: z.number().positive().optional().describe("The plan's weekly price, in US dollars"),
+      planCredits: z.number().positive().optional().describe('Credits the plan gives each week'),
+      addOnCreditUsd: z.number().positive().optional().describe('What one credit over the plan costs, in US dollars'),
+      boxServings: z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe('Servings the box provides each week, as 4-serving recipes, such as 12 for three'),
     })
     .optional(),
 });

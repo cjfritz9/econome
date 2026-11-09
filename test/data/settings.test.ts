@@ -13,9 +13,18 @@ describe('SettingsSchema', () => {
       timezone: 'America/New_York',
       dailyClaudeCapUsd: 0.5,
       weeklyCapUsd: 150,
-      hungryroot: { deliveryDay: 'monday', cutoffDay: 'thursday', cutoffTime: '19:00' },
+      hungryroot: {
+        deliveryDay: 'monday',
+        cutoffDay: 'thursday',
+        cutoffTime: '19:00',
+        planPriceUsd: 82.32,
+        planCredits: 36,
+        addOnCreditUsd: 1.99,
+        boxServings: 12,
+      },
       planningDirective: 'directives/cutting.md',
       mealTargets: { breakfast: 0, lunch: 8, dinner: 12 },
+      kroger: { locationId: '01400513' },
     };
 
     expect(SettingsSchema.parse(settings)).toEqual(settings);
@@ -30,6 +39,8 @@ describe('SettingsSchema', () => {
     ['a planning directive outside directives/', { planningDirective: 'planning.md' }],
     ['a negative meal target', { mealTargets: { dinner: -2 } }],
     ['a fractional meal target', { mealTargets: { lunch: 2.5 } }],
+    ['a box of part servings', { hungryroot: { boxServings: 12.5 } }],
+    ['a Kroger store id of the wrong length', { kroger: { locationId: '123' } }],
   ])('rejects %s', (_label, settings) => {
     expect(SettingsSchema.safeParse(settings).success).toBe(false);
   });

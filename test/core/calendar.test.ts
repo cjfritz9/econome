@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { chooseWeek, nextMonday, todayIn, weekOf, weeksEndingWith } from '../../src/core/calendar.ts';
+import { chooseWeek, nextMonday, openBoxWeek, todayIn, weekOf, weeksEndingWith } from '../../src/core/calendar.ts';
 
 describe('weekOf', () => {
   it('gives the ISO week, Monday to Sunday', () => {
@@ -51,5 +51,23 @@ describe('weeksEndingWith', () => {
     const ids = weeksEndingWith(weekOf('2027-01-06'), 3).map((week) => week.id);
 
     expect(ids).toEqual(['2027-W01', '2026-W53', '2026-W52']);
+  });
+});
+
+describe('openBoxWeek', () => {
+  const at = (iso: string) => new Date(`${iso}T15:00:00Z`);
+
+  it("is next week's box until its Thursday cutoff day ends", () => {
+    expect(openBoxWeek('America/New_York', 'thursday', at('2026-11-09')).id).toBe('2026-W47');
+    expect(openBoxWeek('America/New_York', 'thursday', at('2026-11-12')).id).toBe('2026-W47');
+  });
+
+  it('moves to the week after once the cutoff has passed', () => {
+    expect(openBoxWeek('America/New_York', 'thursday', at('2026-11-13')).id).toBe('2026-W48');
+    expect(openBoxWeek('America/New_York', 'thursday', at('2026-11-15')).id).toBe('2026-W48');
+  });
+
+  it('follows another cutoff day', () => {
+    expect(openBoxWeek('America/New_York', 'monday', at('2026-11-10')).id).toBe('2026-W48');
   });
 });

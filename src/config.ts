@@ -5,6 +5,8 @@ const EnvSchema = z.object({
   ECONOME_ACTING_EMAIL: z.email(),
   ANTHROPIC_API_KEY: z.string().min(1),
   FDC_API_KEY: z.string().min(1),
+  KROGER_CLIENT_ID: z.string().min(1).optional(),
+  KROGER_CLIENT_SECRET: z.string().min(1).optional(),
 });
 
 export interface Config {
@@ -12,6 +14,7 @@ export interface Config {
   actingEmail: string;
   anthropicApiKey: string;
   fdcApiKey: string;
+  kroger: { clientId: string; clientSecret: string } | null;
 }
 
 export const loadConfig = (env: NodeJS.ProcessEnv): Config => {
@@ -24,5 +27,9 @@ export const loadConfig = (env: NodeJS.ProcessEnv): Config => {
     actingEmail: parsed.data.ECONOME_ACTING_EMAIL,
     anthropicApiKey: parsed.data.ANTHROPIC_API_KEY,
     fdcApiKey: parsed.data.FDC_API_KEY,
+    kroger:
+      parsed.data.KROGER_CLIENT_ID && parsed.data.KROGER_CLIENT_SECRET
+        ? { clientId: parsed.data.KROGER_CLIENT_ID, clientSecret: parsed.data.KROGER_CLIENT_SECRET }
+        : null,
   };
 };

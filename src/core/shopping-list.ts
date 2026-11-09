@@ -4,6 +4,7 @@ import type { Recipe } from '../data/recipes.ts';
 import type { PlannedMeal } from '../data/weeks.ts';
 import type { LineParse, Unit } from '../llm/parse-ingredients.ts';
 import { formatLine, lineKey } from './ingredient-lines.ts';
+import type { Need } from './packages.ts';
 import { lineGrams } from './nutrition.ts';
 import { GRAMS_PER, isCountUnit, ML_PER } from './units.ts';
 
@@ -22,6 +23,7 @@ export interface ListItem {
   optional?: true;
   runningLow?: true;
   uses: string[];
+  amount?: Need;
 }
 
 export interface ShoppingList {
@@ -76,7 +78,7 @@ const gramsPerUnit = (unit: Unit, parses: LineParse[], weights: Weights) => {
 const toBuy = (amount: number, unit: Unit) =>
   isCountUnit(unit) && !Number.isInteger(Number(amount.toFixed(2))) ? `${Math.ceil(amount)} ${unit}` : undefined;
 
-type Total = { need: string; buy?: string } | { parts: string[]; unweighed: Unit[] };
+type Total = { need: string; buy?: string; amount: Need } | { parts: string[]; unweighed: Unit[] };
 
 export const totalNeed = (parses: LineParse[], weights: Weights): Total | null => {
   if (parses.length === 0) return null;
@@ -85,7 +87,8 @@ export const totalNeed = (parses: LineParse[], weights: Weights): Total | null =
   if (families.size === 1) {
     const { amount, unit } = sumSameFamily(parses);
     const buy = toBuy(amount, unit);
-    return { need: `${n(amount)} ${unit}`, ...(buy && { buy }) };
+    const each = isCountUnit(unit) ? gramsPerUnit(unit, parses.filter(({ packageSize }) => packageSize), NO_WEIGHTS) : null;
+    return { need: `${n(amount)} ${unit}`, ...(buy && { buy }), amount: { value: amount, unit, ...(each && { eachGrams: each }) } };
   }
 
   const unweighed = [...new Set(parses.filter((parse) => lineGrams(parse, weights) === null).map(({ unit }) => unit))];
@@ -103,7 +106,7 @@ export const totalNeed = (parses: LineParse[], weights: Weights): Total | null =
   const unit = countUnit ?? (units.some((each) => GRAMS_PER[each]) ? largestUnit(units, GRAMS_PER) : 'g');
   const amount = grams / (gramsPerUnit(unit, parses, weights) ?? 1);
   const buy = toBuy(amount, unit);
-  return { need: `≈ ${n(amount)} ${unit}`, ...(buy && { buy }) };
+  return { need: `≈ ${n(amount)} ${unit}`, ...(buy && { buy }), amount: { value: amount, unit } };
 };
 
 const collectUses = (meals: PlannedMeal[], recipes: Recipe[], lines: Map<string, ParsedLine>, warnings: string[]) => {
@@ -163,6 +166,7 @@ export const buildList = (
       ingredient,
       need: total ? ('need' in total ? total.need : total.parts.join(' + ')) : null,
       ...(total && 'buy' in total && total.buy && { buy: total.buy }),
+      ...(total && 'amount' in total && { amount: total.amount }),
       ...(entry?.comesWith && { comesWith: entry.comesWith }),
       ...(alternatives.length > 0 && { alternatives }),
       ...(parses.every((parse) => parse?.optional) && { optional: true as const }),

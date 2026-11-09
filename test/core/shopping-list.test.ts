@@ -11,18 +11,20 @@ describe('totalNeed', () => {
   it('adds amounts in the same unit', () => {
     expect(totalNeed([parseOf('edamame', { amount: 4, unit: 'cup' }), parseOf('edamame', { amount: 2, unit: 'cup' })], none)).toEqual({
       need: '6 cup',
+      amount: { value: 6, unit: 'cup' },
     });
   });
 
   it('adds volumes in different units, in the largest one used', () => {
     const parses = [parseOf('soy sauce', { amount: 2, unit: 'tbsp' }), parseOf('soy sauce', { amount: 1, unit: 'tsp' })];
 
-    expect(totalNeed(parses, none)).toEqual({ need: '2.33 tbsp' });
+    expect(totalNeed(parses, none)).toMatchObject({ need: '2.33 tbsp', amount: { unit: 'tbsp' } });
   });
 
   it('adds weights in different units, in the largest one used', () => {
-    expect(totalNeed([parseOf('tofu', { amount: 1, unit: 'lb' }), parseOf('tofu', { amount: 8, unit: 'oz' })], none)).toEqual({
+    expect(totalNeed([parseOf('tofu', { amount: 1, unit: 'lb' }), parseOf('tofu', { amount: 8, unit: 'oz' })], none)).toMatchObject({
       need: '1.5 lb',
+      amount: { unit: 'lb' },
     });
   });
 
@@ -30,6 +32,7 @@ describe('totalNeed', () => {
     expect(totalNeed([parseOf('lime', { amount: 0.5 }), parseOf('lime', { amount: 1 })], none)).toEqual({
       need: '1.5 piece',
       buy: '2 piece',
+      amount: { value: 1.5, unit: 'piece' },
     });
   });
 
@@ -37,7 +40,7 @@ describe('totalNeed', () => {
     const parses = [parseOf('green onion', { amount: 2, unit: 'tbsp' }), parseOf('green onion', { amount: 2 })];
     const weights = { gramsPerMl: 99 / 236.588, unitWeights: { piece: 15 } };
 
-    expect(totalNeed(parses, weights)).toEqual({ need: '≈ 2.83 piece', buy: '3 piece' });
+    expect(totalNeed(parses, weights)).toMatchObject({ need: '≈ 2.83 piece', buy: '3 piece', amount: { unit: 'piece' } });
   });
 
   it("uses a package's stated size to combine blocks with a weight", () => {
@@ -46,7 +49,7 @@ describe('totalNeed', () => {
       parseOf('tofu', { amount: 7, unit: 'oz' }),
     ];
 
-    expect(totalNeed(parses, none)).toEqual({ need: '≈ 2.5 block', buy: '3 block' });
+    expect(totalNeed(parses, none)).toMatchObject({ need: '≈ 2.5 block', buy: '3 block', amount: { value: 2.5, unit: 'block' } });
   });
 
   it("keeps amounts apart, naming the missing weight, when they can't be combined", () => {
@@ -108,7 +111,9 @@ describe('buildList', () => {
   const list = buildList([meal(curry), meal(bowl)], [curry, bowl], lines, entries);
 
   it('merges an ingredient across recipes, with each recipe’s amount', () => {
-    expect(list.buy).toEqual([{ ingredient: 'extra-firm tofu', need: '3 block', uses: ['Curry: 2 block', 'Bowl: 1 block'] }]);
+    expect(list.buy).toEqual([
+      { ingredient: 'extra-firm tofu', need: '3 block', uses: ['Curry: 2 block', 'Bowl: 1 block'], amount: { value: 3, unit: 'block' } },
+    ]);
   });
 
   it('puts staples under probablyHave, with alternatives and lines that have no amount', () => {
@@ -116,19 +121,19 @@ describe('buildList', () => {
       { ingredient: 'black pepper', need: null, uses: ['Curry: as needed, from "1 pinch | salt and pepper"'] },
       { ingredient: 'rice', need: null, uses: ['Curry: 1 cup cooked'] },
       { ingredient: 'salt', need: null, uses: ['Curry: to taste'] },
-      { ingredient: 'soy sauce', need: '2 tbsp', alternatives: ['tamari'], uses: ['Curry: 2 tbsp'] },
+      { ingredient: 'soy sauce', need: '2 tbsp', alternatives: ['tamari'], uses: ['Curry: 2 tbsp'], amount: { value: 2, unit: 'tbsp' } },
     ]);
   });
 
   it('puts ingredients without a buying decision under decide, marking optional ones', () => {
     expect(list.decide).toEqual([
-      { ingredient: 'capers', need: '1 tbsp', uses: ['Bowl: 1 tbsp'] },
-      { ingredient: 'shallot', need: '1 piece', optional: true, uses: ['Bowl: 1 piece (optional)'] },
+      { ingredient: 'capers', need: '1 tbsp', uses: ['Bowl: 1 tbsp'], amount: { value: 1, unit: 'tbsp' } },
+      { ingredient: 'shallot', need: '1 piece', optional: true, uses: ['Bowl: 1 piece (optional)'], amount: { value: 1, unit: 'piece' } },
     ]);
   });
 
   it('lists what is never bought on its own instead of dropping it', () => {
-    expect(list.notBought).toEqual([{ ingredient: 'water', need: '1 cup', uses: ['Curry: 1 cup'] }]);
+    expect(list.notBought).toEqual([{ ingredient: 'water', need: '1 cup', uses: ['Curry: 1 cup'], amount: { value: 1, unit: 'cup' } }]);
   });
 
   it('warns about every line it could not count', () => {
@@ -155,7 +160,7 @@ describe('buildList', () => {
     });
 
     expect(answered.buy).toEqual([
-      { ingredient: 'soy sauce', need: '2 tbsp', alternatives: ['tamari'], runningLow: true, uses: ['Curry: 2 tbsp'] },
+      { ingredient: 'soy sauce', need: '2 tbsp', alternatives: ['tamari'], runningLow: true, uses: ['Curry: 2 tbsp'], amount: { value: 2, unit: 'tbsp' } },
     ]);
     expect(answered.have.map(({ ingredient }) => ingredient)).toEqual(['capers', 'extra-firm tofu', 'salt']);
     expect(answered.probablyHave.map(({ ingredient }) => ingredient)).toEqual(['black pepper', 'rice']);

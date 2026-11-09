@@ -15,13 +15,25 @@ export const firestoreWeeks = (db: Firestore): Weeks => {
       await weeks(householdId)
         .doc(weekId)
         .set(
-          { meals, ...(hungryroot && { hungryroot }), ...(targets && { targets }), plannedBy, plannedAt: Timestamp.now() },
+          { meals, ...(hungryroot && { hungryroot, boxLocked: false }), ...(targets && { targets }), plannedBy, plannedAt: Timestamp.now() },
           { merge: true },
         );
     },
 
     saveHave: async (householdId, weekId, have) => {
       await weeks(householdId).doc(weekId).set({ have }, { merge: true });
+    },
+
+    saveHungryroot: async (householdId, weekId, hungryroot, confirmedBy) => {
+      await weeks(householdId)
+        .doc(weekId)
+        .set({ hungryroot, boxLocked: false, boxConfirmedBy: confirmedBy, boxConfirmedAt: Timestamp.now() }, { merge: true });
+    },
+
+    lockBox: async (householdId, weekId, lockedBy) => {
+      await weeks(householdId)
+        .doc(weekId)
+        .set({ boxLocked: true, boxLockedBy: lockedBy, boxLockedAt: Timestamp.now() }, { merge: true });
     },
   };
 };
