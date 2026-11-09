@@ -113,7 +113,7 @@ describe('parseRecipes with notes', () => {
     const { store: notes } = memoryNotes([
       note('ingredients.md', 'We cook with broth, not wine.'),
       note('ingredients/oils.md', 'Frying means neutral oil.'),
-      note('planning.md', 'No cilantro for Jeana.'),
+      note('planning.md', 'No cilantro.'),
     ]);
     const { claude, prompts } = answeringClaude(answerEveryLine);
 
@@ -125,6 +125,51 @@ describe('parseRecipes with notes', () => {
       'Household rules for turning recipe lines into groceries:\n[ingredients.md]\nWe cook with broth, not wine.\n\n[ingredients/oils.md]\nFrying means neutral oil.\n',
     );
     expect(prompts[0]).not.toContain('cilantro');
+  });
+});
+
+describe('parseRecipes after a recipe changes', () => {
+  const oldOil = { amount: 1.5, unit: 'tbsp', name: 'oil' };
+  const newOil = { amount: 2, unit: 'tbsp', name: 'Oil' };
+
+  it("keeps the household's meaning when the same recipe's line changes only its amount", async () => {
+    const { store, stored } = memoryParsedLines([parsedLine(oldOil, parseOf('olive oil', { amount: 1.5, unit: 'tbsp' }), 'corrected', ['scram'])]);
+    const { claude } = answeringClaude(() => ({ lines: [{ line: 1, ...parseOf('vegetable oil', { amount: 2, unit: 'tbsp', doubt: 'which oil?' }) }] }));
+
+    const run = await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [
+      recipeWith('scram', [newOil]),
+    ]);
+
+    expect(run.carried).toBe(1);
+    expect(stored.get(lineKey(newOil))).toMatchObject({
+      source: 'corrected',
+      recipeIds: ['scram'],
+      parse: { ingredient: 'olive oil', amount: 2, doubt: null },
+    });
+  });
+
+  it("leaves another recipe's same wording to Claude", async () => {
+    const { store, stored } = memoryParsedLines([parsedLine(oldOil, parseOf('olive oil'), 'corrected', ['scram'])]);
+    const { claude } = answeringClaude(() => ({ lines: [{ line: 1, ...parseOf('neutral oil', { amount: 2, unit: 'tbsp' }) }] }));
+
+    await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [
+      recipeWith('stir-fry', [newOil]),
+    ]);
+
+    expect(stored.get(lineKey(newOil))).toMatchObject({ source: 'claude', parse: { ingredient: 'neutral oil' } });
+  });
+
+  it('records which recipes use each corrected line, so a later change can find it', async () => {
+    const { store, stored } = memoryParsedLines([parsedLine(oldOil, parseOf('olive oil'), 'corrected')]);
+    const { claude, prompts } = answeringClaude(answerEveryLine);
+
+    await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [
+      recipeWith('scram', [oldOil]),
+      recipeWith('hash', [oldOil]),
+    ]);
+
+    expect(prompts).toEqual([]);
+    expect(stored.get(lineKey(oldOil))?.recipeIds).toEqual(['scram', 'hash']);
   });
 });
 

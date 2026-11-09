@@ -1,16 +1,17 @@
 import type { Household } from '../data/household.ts';
 import { aliasMap, withAliases, type IngredientEntry, type IngredientRegistry } from '../data/ingredients.ts';
 import { asRules, INGREDIENT_NOTES, notesAbout, type Notes } from '../data/notes.ts';
-import type { ParsedLine, ParsedLines } from '../data/parsed-lines.ts';
+import { indexByLine, meaningsFor, withMeaning, withRecipes, type ParsedLine, type ParsedLines } from '../data/parsed-lines.ts';
 import type { Recipe } from '../data/recipes.ts';
 import { SpendCapError, type Claude } from '../llm/claude.ts';
 import { parseLines } from '../llm/parse-ingredients.ts';
 import { logger } from '../logger.ts';
-import { formatLine, uniqueLines } from './ingredient-lines.ts';
+import { formatLine, normalizeText, uniqueLines } from './ingredient-lines.ts';
 
 export interface ParseRun {
   parsed: number;
   reused: number;
+  carried: number;
   failed: { recipeId: string; reason: string }[];
   stopped: string | null;
   lines: Map<string, ParsedLine>;
@@ -33,8 +34,21 @@ export const parseRecipes = async (
     notes.list(household.id),
   ]);
   const rules = asRules(notesAbout(allNotes, INGREDIENT_NOTES));
-  const lines = new Map(stored.map((parsed) => [parsed.key, parsed]));
+  const lines = indexByLine(stored);
   const aliases = aliasMap(entries);
+
+  const stamped = new Map<string, ParsedLine>();
+  for (const recipe of recipes) {
+    for (const { key } of uniqueLines(recipe)) {
+      const parsed = lines.get(key);
+      if (parsed?.source !== 'corrected' || parsed.recipeIds.includes(recipe.id)) continue;
+      const withRecipe = withRecipes(parsed, [recipe.id]);
+      lines.set(key, withRecipe);
+      stamped.set(withRecipe.key, withRecipe);
+    }
+  }
+  if (stamped.size > 0) await parsedLines.save(household.id, [...stamped.values()]);
+
   const pending = new Set(
     recipes
       .flatMap((recipe) => uniqueLines(recipe).map(({ key }) => key))
@@ -43,7 +57,7 @@ export const parseRecipes = async (
   const known = new Set(
     [...lines.values()].filter(({ key }) => !pending.has(key)).map(({ parse }) => parse.ingredient),
   );
-  const run: ParseRun = { parsed: 0, reused: 0, failed: [], stopped: null, lines };
+  const run: ParseRun = { parsed: 0, reused: 0, carried: 0, failed: [], stopped: null, lines };
 
   for (const recipe of recipes) {
     const recipeLines = uniqueLines(recipe);
@@ -52,9 +66,14 @@ export const parseRecipes = async (
     if (missing.length === 0) continue;
 
     try {
-      const parsed = (await parseLines(claude, household, recipe.title, missing, [...known].sort(), rules)).map(
-        (entry): ParsedLine => ({ ...entry, parse: withAliases(entry.parse, aliases), source: 'claude' }),
-      );
+      const meanings = meaningsFor(lines.values(), recipe.id);
+      const parsed = (await parseLines(claude, household, recipe.title, missing, [...known].sort(), rules)).map((entry): ParsedLine => {
+        const meaning = meanings.get(normalizeText(entry.line.name));
+        return meaning
+          ? { ...entry, parse: withAliases(withMeaning(entry.parse, meaning), aliases), source: 'corrected', recipeIds: [recipe.id] }
+          : { ...entry, parse: withAliases(entry.parse, aliases), source: 'claude', recipeIds: [] };
+      });
+      run.carried += parsed.filter(({ source }) => source === 'corrected').length;
       await parsedLines.save(household.id, parsed);
       for (const entry of parsed) {
         lines.set(entry.key, entry);

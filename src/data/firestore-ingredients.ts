@@ -26,8 +26,8 @@ export const firestoreIngredients = (db: Firestore): IngredientRegistry => {
     },
 
     save: async (householdId, entries) =>
-      inBatches(entries, (batch, { id, name, aliases, buying, comesWith }) =>
-        batch.set(collection(householdId).doc(id), { name, aliases, buying, comesWith, updatedAt: Timestamp.now() }),
+      inBatches(entries, (batch, { id, ...entry }) =>
+        batch.set(collection(householdId).doc(id), { ...IngredientEntrySchema.parse(entry), updatedAt: Timestamp.now() }),
       ),
 
     remove: async (householdId, ids) => inBatches(ids, (batch, id) => batch.delete(collection(householdId).doc(id))),

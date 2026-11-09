@@ -1,8 +1,10 @@
 import * as z from 'zod';
 import { Weekday } from '../core/calendar.ts';
+import { NotePath } from './notes.ts';
 
 export const SETTINGS_FIELD = 'econome';
 export const DEFAULT_DAILY_CLAUDE_CAP_USD = 1;
+export const DEFAULT_PLANNING_DIRECTIVE = 'directives/general.md';
 
 const isTimeZone = (value: string) => {
   try {
@@ -25,6 +27,9 @@ export const SettingsSchema = z.object({
     .optional()
     .describe(`Daily spending cap for Économe's own Claude calls, in US dollars (default ${DEFAULT_DAILY_CLAUDE_CAP_USD})`),
   weeklyCapUsd: z.number().positive().optional().describe('Weekly grocery budget the review compares against, in US dollars'),
+  planningDirective: NotePath.refine((path) => path.startsWith('directives/'), 'A planning directive is a note under directives/')
+    .optional()
+    .describe(`The note under directives/ that planning and recipe suggestions follow (default ${DEFAULT_PLANNING_DIRECTIVE})`),
   hungryroot: z
     .object({
       deliveryDay: Weekday.optional(),
@@ -51,6 +56,7 @@ export const parseSettings = (value: unknown): Settings => {
 export const withDefaults = (settings: Settings) => ({
   ...settings,
   dailyClaudeCapUsd: settings.dailyClaudeCapUsd ?? DEFAULT_DAILY_CLAUDE_CAP_USD,
+  planningDirective: settings.planningDirective ?? DEFAULT_PLANNING_DIRECTIVE,
 });
 
 const isPlainObject = (value: unknown): value is Record<string, unknown> =>

@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { StdioServerTransport } from '@modelcontextprotocol/server/stdio';
 import { loadConfig } from '../config.ts';
 import { connectFirebase } from '../data/firebase.ts';
+import { firestoreAccess } from '../data/firestore-access.ts';
 import { firestoreDecisions } from '../data/firestore-decisions.ts';
 import { firestoreHouseholds } from '../data/firestore-households.ts';
 import { firestoreIngredients } from '../data/firestore-ingredients.ts';
@@ -13,6 +14,7 @@ import { firestoreWeeks } from '../data/firestore-weeks.ts';
 import { anthropicSender } from '../llm/anthropic.ts';
 import { createClaude } from '../llm/claude.ts';
 import { logger } from '../logger.ts';
+import { fdcClient } from '../sources/fdc.ts';
 import { createServer } from './server.ts';
 
 const main = async () => {
@@ -22,6 +24,7 @@ const main = async () => {
   const spend = firestoreSpend(db);
 
   const server = createServer({
+    access: firestoreAccess(db),
     households: firestoreHouseholds(db),
     recipes: firestoreRecipes(db),
     weeks: firestoreWeeks(db),
@@ -29,6 +32,7 @@ const main = async () => {
     parsedLines: firestoreParsedLines(db),
     ingredients: firestoreIngredients(db),
     notes: firestoreNotes(db),
+    fdc: fdcClient(config.fdcApiKey),
     decisions: firestoreDecisions(db),
     claude: createClaude({ send: anthropicSender(new Anthropic({ apiKey: config.anthropicApiKey })), ledger: spend }),
     actingUid: actingUser.uid,

@@ -1,12 +1,21 @@
 import { describe, expect, it } from 'vitest';
-import { formatLine, lineKey, uniqueLines } from '../../src/core/ingredient-lines.ts';
+import { formatLine, lineKey, recipesWithLine, uniqueLines } from '../../src/core/ingredient-lines.ts';
 import type { Recipe } from '../../src/data/recipes.ts';
 
 const garlic = { amount: 2, unit: 'cloves', name: 'garlic, minced' };
 
 describe('lineKey', () => {
-  it('is the same for the same line, ignoring stray spaces', () => {
-    expect(lineKey({ amount: 2, unit: ' cloves', name: 'garlic, minced ' })).toBe(lineKey(garlic));
+  it.each([
+    ['stray spaces', { amount: 2, unit: ' cloves', name: 'garlic,  minced ' }],
+    ['letter case', { amount: 2, unit: 'Cloves', name: 'Garlic, Minced' }],
+    ['a trailing full stop', { amount: 2, unit: 'cloves', name: 'garlic, minced.' }],
+    ['a unit spelled out or singular', { amount: 2, unit: 'clove', name: 'garlic, minced' }],
+  ])('is the same line despite %s', (_label, line) => {
+    expect(lineKey(line)).toBe(lineKey(garlic));
+  });
+
+  it('treats unit spellings alike', () => {
+    expect(lineKey({ amount: 1, unit: 'Tablespoons', name: 'oil' })).toBe(lineKey({ amount: 1, unit: 'tbsp.', name: 'oil' }));
   });
 
   it.each([
@@ -21,6 +30,21 @@ describe('lineKey', () => {
 describe('formatLine', () => {
   it('shows amount, unit and name', () => {
     expect(formatLine({ amount: 2, unit: '', name: ' Bell peppers, sliced' })).toBe('2  | Bell peppers, sliced');
+  });
+});
+
+describe('recipesWithLine', () => {
+  it('names the recipes that use a line, however it is spelled', () => {
+    const recipe = (id: string, lines: { amount: number; unit: string; name: string }[]): Recipe => ({
+      id,
+      title: id,
+      description: '',
+      servings: 2,
+      tags: [],
+      ingredientGroups: [{ ingredients: lines }],
+    });
+
+    expect(recipesWithLine([recipe('a', [garlic]), recipe('b', [{ ...garlic, name: 'Garlic, minced' }]), recipe('c', [])], garlic)).toEqual(['a', 'b']);
   });
 });
 

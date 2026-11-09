@@ -3,9 +3,13 @@ import {
   addAlias,
   aliasMap,
   describeIngredients,
+  describeWeights,
   removeAlias,
   setBuying,
   withAliases,
+  withFdcQuery,
+  withFood,
+  withUnitWeight,
 } from '../../src/data/ingredients.ts';
 import { entry, parseOf } from '../fakes.ts';
 
@@ -96,6 +100,48 @@ describe('setBuying', () => {
   });
 });
 
+describe('withFood', () => {
+  const food = { fdcId: 11, description: 'Cucumber, raw', per100g: null, source: 'claude' as const, doubt: null };
+
+  it("sets the food and fills only the weights the household hasn't set", () => {
+    const saved = withFood([entry('cucumber', { buying: 'weekly', unitWeights: { piece: 400 } })], 'cucumber', food, {
+      gramsPerMl: 0.95,
+      unitWeights: { piece: 300, slice: 7 },
+    });
+
+    expect(saved).toEqual(entry('cucumber', { buying: 'weekly', food, gramsPerMl: 0.95, unitWeights: { piece: 400, slice: 7 } }));
+  });
+
+  it('creates an entry for an ingredient with none yet', () => {
+    expect(withFood([], 'white wine', food).food).toEqual(food);
+  });
+});
+
+describe('withFdcQuery', () => {
+  it("keeps the ingredient's other details and stores the trimmed search term", () => {
+    expect(withFdcQuery([entry('lemongrass', { buying: 'weekly' })], 'lemongrass', ' lemon grass ')).toEqual(
+      entry('lemongrass', { buying: 'weekly', fdcQuery: 'lemon grass' }),
+    );
+  });
+});
+
+describe('withUnitWeight', () => {
+  it('turns a volume into a density and keeps a counted unit as a weight', () => {
+    expect(withUnitWeight([], 'flour', 'cup', 125).gramsPerMl).toBeCloseTo(0.528, 3);
+    expect(withUnitWeight([entry('cucumber', { unitWeights: { slice: 7 } })], 'cucumber', 'piece', 400).unitWeights).toEqual({ slice: 7, piece: 400 });
+  });
+
+  it('refuses a unit that is already a weight', () => {
+    expect(() => withUnitWeight([], 'flour', 'oz', 28)).toThrow(/already a weight/);
+  });
+});
+
+describe('describeWeights', () => {
+  it('shows the density as a cup and each counted unit', () => {
+    expect(describeWeights({ gramsPerMl: 0.528, unitWeights: { piece: 400.4 } })).toEqual(['1 cup = 125 g', '1 piece = 400 g']);
+  });
+});
+
 describe('describeIngredients', () => {
   it('shows each name with its buying, comesWith and aliases, undecided when it has no entry', () => {
     const index = [
@@ -111,6 +157,19 @@ describe('describeIngredients', () => {
       { ingredient: 'adobo sauce', buying: 'never', comesWith: 'chipotle pepper in adobo sauce', lines: ['1 tbsp | adobo sauce'] },
       { ingredient: 'garlic', buying: 'undecided', lines: ['2 cloves | garlic'] },
       { ingredient: 'salt', buying: 'staple', aliases: ['kosher salt'], lines: [] },
+    ]);
+  });
+
+  it('shows the matched food, or that none fits, and the weights', () => {
+    const food = { fdcId: 11, description: 'Cucumber, raw', per100g: null, source: 'claude' as const, doubt: null };
+    const entries = [
+      entry('cucumber', { food, fdcQuery: 'cucumber raw', unitWeights: { piece: 400 } }),
+      entry('furikake', { food: { ...food, fdcId: null, description: null } }),
+    ];
+
+    expect(describeIngredients([], entries)).toEqual([
+      { ingredient: 'cucumber', buying: 'undecided', food: 'Cucumber, raw', searchAs: 'cucumber raw', weights: ['1 piece = 400 g'], lines: [] },
+      { ingredient: 'furikake', buying: 'undecided', food: 'no FDC food', lines: [] },
     ]);
   });
 });

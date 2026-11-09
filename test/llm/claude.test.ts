@@ -6,7 +6,7 @@ import { createClaude, spendCapMessage, type ClaudeReply, type SpendLedger } fro
 const household: Household = {
   id: 'h1',
   name: 'Home',
-  members: ['cj'],
+  members: ['uid1'],
   settings: { timezone: 'America/New_York', dailyClaudeCapUsd: 0.5 },
 };
 

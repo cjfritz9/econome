@@ -1,28 +1,37 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import { chooseWeek, householdToday, Weekday, weeksEndingWith } from '../core/calendar.ts';
-import { formatLine } from '../core/ingredient-lines.ts';
+import { matchFoods } from '../core/food-matching.ts';
+import { recipeNutrition } from '../core/nutrition.ts';
+import { formatLine, normalizeText, recipesWithLine } from '../core/ingredient-lines.ts';
 import { parseRecipes, undecidedIngredients, unsureLines } from '../core/parsing.ts';
+import { ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
 import type { Decisions } from '../data/decisions.ts';
 import { requireHousehold, type Households } from '../data/household.ts';
 import {
   addAlias,
   BUYING,
   describeIngredients,
+  describeWeights,
   normalizeName,
   removeAlias,
   setBuying,
+  withFdcQuery,
+  withFood,
+  withUnitWeight,
   type IngredientRegistry,
 } from '../data/ingredients.ts';
 import { INGREDIENT_NOTES, NoteContent, NotePath, type Notes } from '../data/notes.ts';
-import { correctLine, ingredientIndex, renameIngredient, type ParsedLines } from '../data/parsed-lines.ts';
+import { correctLine, indexByLine, ingredientIndex, renameIngredient, withRecipes, type ParsedLines } from '../data/parsed-lines.ts';
 import { NOT_A_MEAL_TAG, readLibrary, withTag, type Recipes } from '../data/recipes.ts';
 import { SettingsSchema, toUpdatePaths, withDefaults } from '../data/settings.ts';
 import { lastPlannedDates, loadWeeks, planMeals, type PlannedWeek, type Weeks } from '../data/weeks.ts';
 import type { Claude, SpendLedger } from '../llm/claude.ts';
-import { LineParseSchema } from '../llm/parse-ingredients.ts';
+import { LineParseSchema, UNITS } from '../llm/parse-ingredients.ts';
+import type { FoodData } from '../sources/fdc.ts';
 
 export interface ServerDeps {
+  access: Access;
   households: Households;
   recipes: Recipes;
   weeks: Weeks;
@@ -30,6 +39,7 @@ export interface ServerDeps {
   parsedLines: ParsedLines;
   ingredients: IngredientRegistry;
   notes: Notes;
+  fdc: FoodData;
   decisions: Decisions;
   claude: Claude;
   actingUid: string;
@@ -48,7 +58,9 @@ When something looks wrong or unclear, such as a line that doesn't say what to b
 
 A recipe's ingredient list is the source of truth, and Économe never reads its steps. When a line in a recipe is itself wrong or vague, suggest fixing it in Mise, so the recipe is right for whoever cooks it.
 
-Read the notes with read_notes before planning a week or settling an ingredient question.`;
+Read the notes with read_notes before planning a week or settling an ingredient question. Planning and recipe suggestions follow the household's planning directive, the note get_household names as settings.planningDirective. It's always in effect; the household changes it by editing that note with write_note, or swaps it by pointing planningDirective at another note under directives/ with update_settings. Suggested swaps must make sense in the dish, and are only suggestions until someone says yes.
+
+Nutrition is an estimate: each ingredient is matched once to a USDA FoodData Central food with match_foods. A wrong match is fixed with search_foods and set_food, a name FoodData Central spells differently (lemongrass as "lemon grass") with set_food_search, and a wrong weight (one cup, one piece, one can) with set_unit_weight.`;
 
 const IngredientNames = z
   .array(z.string().min(1))
@@ -69,6 +81,7 @@ const jsonResult = (value: unknown) => ({
 const weekResult = ({ week, meals }: PlannedWeek) => ({ week: week.id, start: week.start, end: week.end, meals });
 
 export const createServer = ({
+  access,
   households,
   recipes,
   weeks,
@@ -76,11 +89,17 @@ export const createServer = ({
   parsedLines,
   ingredients,
   notes,
+  fdc,
   decisions,
   claude,
   actingUid,
 }: ServerDeps) => {
-  const server = new McpServer({ name: 'econome', version: '0.7.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'econome', version: '0.12.0' }, { instructions: INSTRUCTIONS });
+
+  const member = async () => {
+    await requireFeature(access, actingUid, ECONOME_FEATURE);
+    return requireHousehold(households, actingUid);
+  };
 
   const loadIngredients = async (householdId: string) => {
     const [lines, entries] = await Promise.all([parsedLines.list(householdId), ingredients.list(householdId)]);
@@ -95,7 +114,7 @@ export const createServer = ({
         "Show the household Économe is working for: its name, its members, Économe's settings, and what Économe has spent on Claude today against its daily cap.",
     },
     async () => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const settings = withDefaults(household.settings);
       const [members, spentToday] = await Promise.all([
         households.findMemberProfiles(household.members),
@@ -119,12 +138,12 @@ export const createServer = ({
       inputSchema: SettingsSchema,
     },
     async (changes) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const paths = toUpdatePaths(changes);
       if (Object.keys(paths).length === 0) throw new Error('No settings were given to change.');
 
       await households.updateSettings(household.id, paths);
-      const updated = await requireHousehold(households, actingUid);
+      const updated = await member();
       return jsonResult(withDefaults(updated.settings));
     },
   );
@@ -132,27 +151,57 @@ export const createServer = ({
   server.registerTool(
     'list_recipes',
     {
-      description: `List the household's Mise recipes that can be planned: id, title, description, servings and tags, plus lastPlanned, the Monday of the latest week it was planned for (looking back ${RECENT_WEEKS - 1} weeks). Archived recipes and anything tagged ${NOT_A_MEAL_TAG} are left out. Recipes Économe can't use are listed under "skipped" with the reason, to be fixed in Mise.`,
+      description: `List the household's Mise recipes that can be planned: id, title, description, servings and tags, plus lastPlanned, the Monday of the latest week it was planned for (looking back ${RECENT_WEEKS - 1} weeks). Each recipe has its estimated nutrition per serving (calories, and grams of protein, carbs, sugar, fiber and fat) from USDA FoodData Central, with nutritionGaps naming lines left out of the estimate and why, and nutrientsMissing naming ingredients whose FoodData Central food has no value for a nutrient, so that nutrient is undercounted. Archived recipes and anything tagged ${NOT_A_MEAL_TAG} are left out. Recipes Économe can't use are listed under "skipped" with the reason, and lines it left out of a recipe it still uses under "skippedLines", both to be fixed in Mise.`,
       inputSchema: z.object({
         tag: z.string().optional().describe('Only list recipes with this tag, in any letter case'),
+        minProtein: z.number().nonnegative().optional().describe('Only recipes with at least this many grams of protein per serving'),
+        maxCarbs: z.number().nonnegative().optional().describe('Only recipes with at most this many grams of carbs per serving'),
+        maxSugar: z.number().nonnegative().optional().describe('Only recipes with at most this many grams of sugar per serving'),
       }),
     },
-    async ({ tag }) => {
-      const household = await requireHousehold(households, actingUid);
+    async ({ tag, minProtein, maxCarbs, maxSugar }) => {
+      const household = await member();
       const recent = weeksEndingWith(chooseWeek(household.settings.timezone, undefined), RECENT_WEEKS);
-      const [docs, planned] = await Promise.all([
+      const [docs, planned, lines, entries] = await Promise.all([
         recipes.listRecipeDocs(household.id),
         loadWeeks(weeks, household.id, recent),
+        parsedLines.list(household.id),
+        ingredients.list(household.id),
       ]);
       const library = readLibrary(docs);
       const lastPlanned = lastPlannedDates(planned);
-      const listed = tag ? withTag(library.recipes, tag) : library.recipes;
+      const byKey = indexByLine(lines);
+      const byName = new Map(entries.map((entry) => [entry.name, entry]));
+      const filtered = minProtein !== undefined || maxCarbs !== undefined || maxSugar !== undefined;
+
+      const listed = (tag ? withTag(library.recipes, tag) : library.recipes).flatMap((recipe) => {
+        const { perServing, gaps, missing } = recipeNutrition(recipe, byKey, byName);
+        const fits =
+          perServing !== null &&
+          perServing.protein >= (minProtein ?? 0) &&
+          perServing.carbs <= (maxCarbs ?? Infinity) &&
+          perServing.sugar <= (maxSugar ?? Infinity);
+        if (filtered && !fits) return [];
+        const { id, title, description, servings, tags } = recipe;
+        const last = lastPlanned.get(id);
+        return [
+          {
+            id,
+            title,
+            description,
+            servings,
+            tags,
+            ...(last && { lastPlanned: last }),
+            nutritionPerServing: perServing ?? 'not estimated yet',
+            ...(perServing && gaps.length > 0 && { nutritionGaps: gaps }),
+            ...(perServing && missing.length > 0 && { nutrientsMissing: missing }),
+          },
+        ];
+      });
       return jsonResult({
-        recipes: listed.map(({ id, title, description, servings, tags }) => {
-          const last = lastPlanned.get(id);
-          return { id, title, description, servings, tags, ...(last && { lastPlanned: last }) };
-        }),
+        recipes: listed,
         ...(library.skipped.length > 0 && { skipped: library.skipped }),
+        ...(library.skippedLines.length > 0 && { skippedLines: library.skippedLines }),
       });
     },
   );
@@ -176,7 +225,7 @@ export const createServer = ({
       }),
     },
     async ({ week: date, meals: requests }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const week = chooseWeek(household.settings.timezone, date);
       const library = readLibrary(await recipes.listRecipeDocs(household.id));
       const meals = planMeals(library.recipes, requests);
@@ -192,7 +241,7 @@ export const createServer = ({
       inputSchema: z.object({ week: WeekDate }),
     },
     async ({ week: date }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const week = chooseWeek(household.settings.timezone, date);
       const [planned = { week, meals: [] }] = await loadWeeks(weeks, household.id, [week]);
       return jsonResult(weekResult(planned));
@@ -213,7 +262,7 @@ export const createServer = ({
       }),
     },
     async ({ recipeIds, reparse }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const library = readLibrary(await recipes.listRecipeDocs(household.id));
       const chosen = recipeIds ? library.recipes.filter((recipe) => recipeIds.includes(recipe.id)) : library.recipes;
       const unknown = (recipeIds ?? []).filter((id) => !chosen.some((recipe) => recipe.id === id));
@@ -224,6 +273,7 @@ export const createServer = ({
       return jsonResult({
         parsed: run.parsed,
         reused: run.reused,
+        ...(run.carried > 0 && { keptCorrections: run.carried }),
         ...(run.stopped && { stopped: run.stopped }),
         ...(run.failed.length > 0 && { failed: run.failed }),
         unsure: unsureLines(chosen, run.lines),
@@ -239,15 +289,18 @@ export const createServer = ({
         'List every ingredient name parsed out of the recipes, with how it\'s bought (weekly, staple, never or undecided), its aliases, and the recipe lines behind it. Use it to spot duplicates such as "scallion" and "green onion" and merge them with rename_ingredient.',
       inputSchema: z.object({
         only: z
-          .enum(['undecided', ...BUYING])
+          .enum(['undecided', 'unmatched', ...BUYING])
           .optional()
-          .describe('Only ingredients bought this way, or "undecided" for the ones not settled yet'),
+          .describe(
+            'Only ingredients bought this way, "undecided" for the ones whose buying isn\'t settled, or "unmatched" for the ones with no FoodData Central food yet',
+          ),
       }),
     },
     async ({ only }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const { lines, entries } = await loadIngredients(household.id);
       const described = describeIngredients(ingredientIndex(lines), entries);
+      if (only === 'unmatched') return jsonResult(described.filter((ingredient) => !('food' in ingredient)));
       return jsonResult(only ? described.filter(({ buying }) => buying === only) : described);
     },
   );
@@ -256,15 +309,16 @@ export const createServer = ({
     'correct_ingredient_line',
     {
       description:
-        "Fix how one recipe line was parsed. Only the fields given change. The household's correction is kept, used from then on, and saved as a decision.",
+        "Fix how one recipe line was parsed. Only the fields given change. The household's correction is kept, used from then on, and saved as a decision. What the line means (the food, alternatives, prep, brand, optional) also carries over when the same recipe's line later changes only its amount or unit.",
       inputSchema: z.object({ line: LineText, changes: LineParseSchema.partial() }),
     },
     async ({ line, changes }) => {
-      const household = await requireHousehold(households, actingUid);
-      const target = (await parsedLines.list(household.id)).find((parsed) => formatLine(parsed.line) === line);
-      if (!target) throw new Error(`No parsed line reads "${line}". Copy it exactly from parse_ingredients or list_ingredients.`);
+      const household = await member();
+      const [stored, docs] = await Promise.all([parsedLines.list(household.id), recipes.listRecipeDocs(household.id)]);
+      const target = stored.find((parsed) => normalizeText(formatLine(parsed.line)) === normalizeText(line));
+      if (!target) throw new Error(`No parsed line reads "${line}". Copy it from parse_ingredients or list_ingredients.`);
 
-      const corrected = correctLine(target, changes);
+      const corrected = withRecipes(correctLine(target, changes), recipesWithLine(readLibrary(docs).recipes, target.line));
       await parsedLines.save(household.id, [corrected]);
       await decisions.record(household.id, {
         kind: 'parse-correction',
@@ -285,9 +339,10 @@ export const createServer = ({
       inputSchema: z.object({ from: z.string().min(1), to: z.string().min(1) }),
     },
     async ({ from, to }) => {
-      const household = await requireHousehold(households, actingUid);
-      const { lines, entries, known } = await loadIngredients(household.id);
-      const renamed = renameIngredient(lines, from, to);
+      const household = await member();
+      const [{ lines, entries, known }, docs] = await Promise.all([loadIngredients(household.id), recipes.listRecipeDocs(household.id)]);
+      const library = readLibrary(docs).recipes;
+      const renamed = renameIngredient(lines, from, to).map((parsed) => withRecipes(parsed, recipesWithLine(library, parsed.line)));
       if (renamed.length === 0 && !known.has(to)) {
         throw new Error(`No parsed line uses "${from}", and "${to}" isn't a known ingredient. Check list_ingredients for the exact names.`);
       }
@@ -315,7 +370,7 @@ export const createServer = ({
       inputSchema: z.object({ alias: z.string().min(1).describe('The alias as list_ingredients shows it') }),
     },
     async ({ alias }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const updated = removeAlias(await ingredients.list(household.id), alias);
       await ingredients.save(household.id, [updated]);
       await decisions.record(household.id, {
@@ -345,7 +400,7 @@ export const createServer = ({
       }),
     },
     async ({ names, buying, comesWith }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const { entries, known } = await loadIngredients(household.id);
       const unknown = [...names, ...(comesWith ? [comesWith] : [])].filter((name) => !known.has(name));
       if (unknown.length > 0) throw new Error(`Not known ingredients: ${unknown.join(', ')}. Check list_ingredients for the exact names.`);
@@ -365,14 +420,165 @@ export const createServer = ({
   );
 
   server.registerTool(
+    'match_foods',
+    {
+      description:
+        "Match ingredients to USDA FoodData Central foods for nutrition estimates, and estimate their weights (grams per cup, per piece, per can) from how the household's lines use them. Each ingredient is matched once and kept; Claude Haiku picks among FoodData Central's search results. Works through the unmatched ingredients a batch at a time and says how many remain. Returns the matches Claude was unsure about and the ingredients with no fitting food, to review with the household.",
+      inputSchema: z.object({
+        ingredients: IngredientNames.optional().describe('Only these ingredients; every unmatched one if left out'),
+        rematch: z.boolean().optional().describe("Match again the ones Claude matched before. The household's choices are kept."),
+        limit: z.number().int().min(1).max(50).optional().describe('How many to match in this call; 25 if left out'),
+      }),
+    },
+    async ({ ingredients: names, rematch, limit }) => {
+      const household = await member();
+      if (names) {
+        const { known } = await loadIngredients(household.id);
+        const unknown = names.filter((name) => !known.has(name));
+        if (unknown.length > 0) throw new Error(`Not known ingredients: ${unknown.join(', ')}. Check list_ingredients for the exact names.`);
+      }
+      const run = await matchFoods({ claude, fdc, ingredients, parsedLines }, household, {
+        ...(names && { names }),
+        rematch: rematch ?? false,
+        limit: limit ?? 25,
+      });
+      return jsonResult({
+        matched: run.matched,
+        remaining: run.remaining,
+        ...(run.stopped && { stopped: run.stopped }),
+        ...(run.failed.length > 0 && { failed: run.failed }),
+        unsure: run.unsure,
+        noFood: run.noFood,
+      });
+    },
+  );
+
+  server.registerTool(
+    'search_foods',
+    {
+      description:
+        'Search USDA FoodData Central, to find a better food for an ingredient than the one match_foods chose. Returns each food\'s fdcId, description, data type, nutrition per 100 g and household portions; pass the fdcId to set_food.',
+      inputSchema: z.object({ query: z.string().min(1).describe('What to search for, such as "tofu extra firm"') }),
+    },
+    async ({ query }) => jsonResult(await fdc.candidates(query)),
+  );
+
+  server.registerTool(
+    'set_food',
+    {
+      description:
+        "Choose the USDA FoodData Central food for an ingredient, by its fdcId from search_foods, or null when no food fits and the ingredient should stay out of nutrition estimates. The household's choice is kept, used from then on, and saved as a decision.",
+      inputSchema: z.object({
+        ingredient: z.string().min(1).describe('The ingredient as list_ingredients shows it'),
+        fdcId: z.number().int().positive().nullable(),
+      }),
+    },
+    async ({ ingredient, fdcId }) => {
+      const household = await member();
+      const { entries, known } = await loadIngredients(household.id);
+      if (!known.has(ingredient)) throw new Error(`"${ingredient}" isn't a known ingredient. Check list_ingredients for the exact name.`);
+      const chosen = fdcId === null ? null : await fdc.food(fdcId);
+      if (fdcId !== null && !chosen) throw new Error(`FoodData Central has no food ${fdcId}.`);
+
+      const previous = entries.find((entry) => entry.name === ingredient)?.food ?? null;
+      const saved = withFood(entries, ingredient, {
+        fdcId: chosen?.fdcId ?? null,
+        description: chosen?.description ?? null,
+        per100g: chosen?.per100g ?? null,
+        source: 'corrected',
+        doubt: null,
+      });
+      await ingredients.save(household.id, [saved]);
+      await decisions.record(household.id, {
+        kind: 'food-match',
+        input: ingredient,
+        suggestion: previous && { fdcId: previous.fdcId, description: previous.description },
+        answer: chosen && { fdcId: chosen.fdcId, description: chosen.description },
+        by: actingUid,
+      });
+      return jsonResult({ ingredient, food: saved.food?.description ?? 'no FoodData Central food', per100g: saved.food?.per100g ?? null });
+    },
+  );
+
+  server.registerTool(
+    'set_food_search',
+    {
+      description:
+        'Teach Économe what to search FoodData Central for when an ingredient\'s own name finds the wrong foods or none, such as "lemon grass" for lemongrass. The search term is kept for every later match and saved as a decision, and the ingredient is matched again with it now, unless the household already chose its food with set_food.',
+      inputSchema: z.object({
+        ingredient: z.string().min(1).describe('The ingredient as list_ingredients shows it'),
+        query: z.string().min(1).describe('What to search FoodData Central for'),
+      }),
+    },
+    async ({ ingredient, query }) => {
+      const household = await member();
+      const { entries, known } = await loadIngredients(household.id);
+      if (!known.has(ingredient)) throw new Error(`"${ingredient}" isn't a known ingredient. Check list_ingredients for the exact name.`);
+      const previous = entries.find((entry) => entry.name === ingredient);
+      const saved = withFdcQuery(entries, ingredient, query);
+      await ingredients.save(household.id, [saved]);
+      await decisions.record(household.id, {
+        kind: 'food-search',
+        input: ingredient,
+        suggestion: previous?.fdcQuery ?? ingredient,
+        answer: saved.fdcQuery,
+        by: actingUid,
+      });
+      if (saved.food?.source === 'corrected') {
+        return jsonResult({ ingredient, searchAs: saved.fdcQuery, food: saved.food.description, kept: 'the food the household chose' });
+      }
+
+      const run = await matchFoods({ claude, fdc, ingredients, parsedLines }, household, { names: [ingredient], rematch: true, limit: 1 });
+      const matched = (await ingredients.list(household.id)).find((entry) => entry.name === ingredient);
+      return jsonResult({
+        ingredient,
+        searchAs: saved.fdcQuery,
+        food: matched?.food?.description ?? 'no FoodData Central food',
+        ...(run.stopped && { stopped: run.stopped }),
+        ...(run.failed.length > 0 && { failed: run.failed }),
+        ...(matched?.food?.doubt && { doubt: matched.food.doubt }),
+      });
+    },
+  );
+
+  server.registerTool(
+    'set_unit_weight',
+    {
+      description:
+        'Say what one unit of an ingredient weighs, such as 1 cup of flour = 125 g, 1 piece of English cucumber = 400 g, or 1 can of coconut milk = 400 g. A volume unit sets the ingredient\'s weight for every volume. The household\'s weight is kept, used from then on, and saved as a decision.',
+      inputSchema: z.object({
+        ingredient: z.string().min(1).describe('The ingredient as list_ingredients shows it'),
+        unit: z.enum(UNITS),
+        grams: z.number().positive().describe('Grams in one unit'),
+      }),
+    },
+    async ({ ingredient, unit, grams }) => {
+      const household = await member();
+      const { entries, known } = await loadIngredients(household.id);
+      if (!known.has(ingredient)) throw new Error(`"${ingredient}" isn't a known ingredient. Check list_ingredients for the exact name.`);
+      const previous = entries.find((entry) => entry.name === ingredient);
+      const saved = withUnitWeight(entries, ingredient, unit, grams);
+      await ingredients.save(household.id, [saved]);
+      await decisions.record(household.id, {
+        kind: 'unit-weight',
+        input: { ingredient, unit },
+        suggestion: previous ? describeWeights(previous) : null,
+        answer: grams,
+        by: actingUid,
+      });
+      return jsonResult({ ingredient, weights: describeWeights(saved) });
+    },
+  );
+
+  server.registerTool(
     'read_notes',
     {
       description:
-        "Read the household's notes: long-term rules and facts that don't fit a tool, such as \"no cilantro for Jeana\" or \"we cook with broth, not wine\". Without a path, returns every note.",
+        "Read the household's notes: long-term rules and facts that don't fit a tool, such as \"no cilantro\" or \"we cook with broth, not wine\". Without a path, returns every note.",
       inputSchema: z.object({ path: NotePath.optional().describe('One note, such as "ingredients.md"') }),
     },
     async ({ path }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const all = (await notes.list(household.id)).sort((a, b) => a.path.localeCompare(b.path));
       if (!path) return jsonResult(all);
       const note = all.find((candidate) => candidate.path === path);
@@ -388,7 +594,7 @@ export const createServer = ({
       inputSchema: z.object({ path: NotePath, content: NoteContent }),
     },
     async ({ path, content }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const previous = (await notes.list(household.id)).find((note) => note.path === path);
       await notes.save(household.id, { path, content, updatedBy: actingUid });
       await decisions.record(household.id, {
@@ -409,7 +615,7 @@ export const createServer = ({
       inputSchema: z.object({ path: NotePath }),
     },
     async ({ path }) => {
-      const household = await requireHousehold(households, actingUid);
+      const household = await member();
       const previous = (await notes.list(household.id)).find((note) => note.path === path);
       if (!previous) throw new Error(`No note at "${path}".`);
       await notes.remove(household.id, path);

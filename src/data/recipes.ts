@@ -3,14 +3,14 @@ import * as z from 'zod';
 export const NOT_A_MEAL_TAG = 'not-a-meal';
 
 const IngredientSchema = z.object({
-  amount: z.number().positive(),
+  amount: z.number().nonnegative(),
   unit: z.string(),
   name: z.string().min(1),
 });
 
 const IngredientGroupSchema = z.object({
   ingredients: z
-    .array(IngredientSchema)
+    .array(z.unknown())
     .nullish()
     .transform((lines) => lines ?? []),
 });
@@ -49,9 +49,16 @@ export interface SkippedRecipe {
   reason: string;
 }
 
+export interface SkippedLine {
+  id: string;
+  line: string;
+  reason: string;
+}
+
 export interface RecipeLibrary {
   recipes: Recipe[];
   skipped: SkippedRecipe[];
+  skippedLines: SkippedLine[];
 }
 
 export interface RecipeDoc {
@@ -63,8 +70,27 @@ export interface Recipes {
   listRecipeDocs: (householdId: string) => Promise<RecipeDoc[]>;
 }
 
+const isBlankRow = (line: unknown) => {
+  const name = z.object({ name: z.string().nullish() }).safeParse(line);
+  return name.success && !name.data.name?.trim();
+};
+
+const readLines = (id: string, lines: unknown[], skippedLines: SkippedLine[]) => {
+  const read: Ingredient[] = [];
+  for (const line of lines) {
+    if (isBlankRow(line)) {
+      skippedLines.push({ id, line: JSON.stringify(line), reason: 'A blank row with no ingredient name' });
+      continue;
+    }
+    const parsed = IngredientSchema.safeParse(line);
+    if (parsed.success) read.push(parsed.data);
+    else skippedLines.push({ id, line: JSON.stringify(line), reason: z.prettifyError(parsed.error) });
+  }
+  return read;
+};
+
 export const readLibrary = (docs: RecipeDoc[]): RecipeLibrary => {
-  const library: RecipeLibrary = { recipes: [], skipped: [] };
+  const library: RecipeLibrary = { recipes: [], skipped: [], skippedLines: [] };
 
   for (const { id, data } of docs) {
     const parsed = RecipeDocSchema.safeParse(data);
@@ -73,15 +99,18 @@ export const readLibrary = (docs: RecipeDoc[]): RecipeLibrary => {
       continue;
     }
 
-    const { archived, ...recipe } = parsed.data;
+    const { archived, ingredientGroups, ...recipe } = parsed.data;
     if (archived || recipe.tags.includes(NOT_A_MEAL_TAG)) continue;
 
-    if (recipe.ingredientGroups.every((group) => group.ingredients.length === 0)) {
+    const skippedLines: SkippedLine[] = [];
+    const groups = ingredientGroups.map((group) => ({ ingredients: readLines(id, group.ingredients, skippedLines) }));
+    library.skippedLines.push(...skippedLines);
+    if (groups.every((group) => group.ingredients.length === 0)) {
       library.skipped.push({ id, reason: 'Has no ingredients' });
       continue;
     }
 
-    library.recipes.push({ id, ...recipe });
+    library.recipes.push({ id, ...recipe, ingredientGroups: groups });
   }
 
   library.recipes.sort((a, b) => a.title.localeCompare(b.title));

@@ -11,32 +11,32 @@ const storeWith = (userHouseholds: Record<string, string>, households: Record<st
   findHousehold: async (householdId: string) => households[householdId],
 });
 
-const home: HouseholdRecord = { id: 'h1', name: 'Home', members: ['cj', 'jeana'] };
+const home: HouseholdRecord = { id: 'h1', name: 'Home', members: ['uid1', 'uid2'] };
 
 describe('requireHousehold', () => {
   it('returns the household for a member, with its settings parsed', async () => {
-    const store = storeWith({ cj: 'h1' }, { h1: { ...home, econome: { timezone: 'America/New_York' } } });
+    const store = storeWith({ uid1: 'h1' }, { h1: { ...home, econome: { timezone: 'America/New_York' } } });
 
-    await expect(requireHousehold(store, 'cj')).resolves.toEqual({
+    await expect(requireHousehold(store, 'uid1')).resolves.toEqual({
       id: 'h1',
       name: 'Home',
-      members: ['cj', 'jeana'],
+      members: ['uid1', 'uid2'],
       settings: { timezone: 'America/New_York' },
     });
   });
 
   it('returns empty settings when Économe has stored none yet', async () => {
-    const household = await requireHousehold(storeWith({ cj: 'h1' }, { h1: home }), 'cj');
+    const household = await requireHousehold(storeWith({ uid1: 'h1' }, { h1: home }), 'uid1');
 
     expect(household.settings).toEqual({});
   });
 
   it('asks to set up a household when the user has none', async () => {
-    await expect(requireHousehold(storeWith({}, { h1: home }), 'cj')).rejects.toThrow(NO_HOUSEHOLD_MESSAGE);
+    await expect(requireHousehold(storeWith({}, { h1: home }), 'uid1')).rejects.toThrow(NO_HOUSEHOLD_MESSAGE);
   });
 
   it('asks to set up a household when the household record is gone', async () => {
-    await expect(requireHousehold(storeWith({ cj: 'h1' }, {}), 'cj')).rejects.toThrow(NO_HOUSEHOLD_MESSAGE);
+    await expect(requireHousehold(storeWith({ uid1: 'h1' }, {}), 'uid1')).rejects.toThrow(NO_HOUSEHOLD_MESSAGE);
   });
 
   it('refuses a user whose profile points at a household they are not in', async () => {
@@ -46,14 +46,14 @@ describe('requireHousehold', () => {
   });
 
   it('refuses everyone for a household with no members left', async () => {
-    const store = storeWith({ cj: 'h1' }, { h1: { ...home, members: [] } });
+    const store = storeWith({ uid1: 'h1' }, { h1: { ...home, members: [] } });
 
-    await expect(requireHousehold(store, 'cj')).rejects.toThrow(NOT_A_MEMBER_MESSAGE);
+    await expect(requireHousehold(store, 'uid1')).rejects.toThrow(NOT_A_MEMBER_MESSAGE);
   });
 
   it('reports invalid stored settings instead of ignoring them', async () => {
-    const store = storeWith({ cj: 'h1' }, { h1: { ...home, econome: { timezone: 'Mars/Olympus' } } });
+    const store = storeWith({ uid1: 'h1' }, { h1: { ...home, econome: { timezone: 'Mars/Olympus' } } });
 
-    await expect(requireHousehold(store, 'cj')).rejects.toThrow(/settings on this household are invalid/);
+    await expect(requireHousehold(store, 'uid1')).rejects.toThrow(/settings on this household are invalid/);
   });
 });

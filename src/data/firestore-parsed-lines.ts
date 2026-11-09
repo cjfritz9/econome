@@ -20,8 +20,8 @@ export const firestoreParsedLines = (db: Firestore): ParsedLines => {
     save: async (householdId, lines) => {
       for (let start = 0; start < lines.length; start += BATCH_SIZE) {
         const batch = db.batch();
-        for (const { key, line, parse, source } of lines.slice(start, start + BATCH_SIZE)) {
-          batch.set(collection(householdId).doc(key), { line, parse, source, updatedAt: Timestamp.now() });
+        for (const { key, line, parse, source, recipeIds } of lines.slice(start, start + BATCH_SIZE)) {
+          batch.set(collection(householdId).doc(key), { line, parse, source, recipeIds, updatedAt: Timestamp.now() });
         }
         await batch.commit();
       }

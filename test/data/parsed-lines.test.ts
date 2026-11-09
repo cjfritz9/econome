@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { correctLine, ingredientIndex, renameIngredient } from '../../src/data/parsed-lines.ts';
+import { correctLine, indexByLine, ingredientIndex, meaningsFor, renameIngredient, withMeaning } from '../../src/data/parsed-lines.ts';
 import { parsedLine, parseOf } from '../fakes.ts';
 
 const scallions = parsedLine({ amount: 2, unit: 'piece', name: 'scallions, chopped' }, parseOf('scallion'));
@@ -47,5 +47,39 @@ describe('ingredientIndex', () => {
       { ingredient: 'green onion', lines: ['1 piece | green onion'] },
       { ingredient: 'scallion', lines: ['2 piece | scallions, chopped'] },
     ]);
+  });
+});
+
+describe('indexByLine', () => {
+  it("keys lines by their loose text and keeps the household's correction over Claude's parse", () => {
+    const claude = parsedLine({ amount: 1, unit: 'tsp', name: 'Black pepper' }, parseOf('black pepper'));
+    const corrected = parsedLine({ amount: 1, unit: 'tsp', name: 'black pepper' }, parseOf('peppercorns'), 'corrected');
+
+    const index = indexByLine([corrected, claude]);
+
+    expect(index.size).toBe(1);
+    expect([...index.values()][0]?.parse.ingredient).toBe('peppercorns');
+  });
+});
+
+describe('meaningsFor', () => {
+  it("collects the meaning of each corrected line in the recipe, by its loose name", () => {
+    const oil = parsedLine({ amount: 1.5, unit: 'tbsp', name: 'Oil' }, parseOf('olive oil'), 'corrected', ['scram']);
+    const elsewhere = parsedLine({ amount: 1, unit: 'tbsp', name: 'oil' }, parseOf('neutral oil'), 'corrected', ['stir-fry']);
+    const guessed = parsedLine({ amount: 1, unit: 'tsp', name: 'salt' }, parseOf('salt'), 'claude', ['scram']);
+
+    const meanings = meaningsFor([oil, elsewhere, guessed], 'scram');
+
+    expect([...meanings.keys()]).toEqual(['oil']);
+    expect(meanings.get('oil')?.ingredient).toBe('olive oil');
+  });
+});
+
+describe('withMeaning', () => {
+  it("takes what the line means from the household and the amount from the new parse, clearing doubt", () => {
+    const fresh = parseOf('vegetable oil', { amount: 3, unit: 'tbsp', doubt: 'which oil?' });
+    const meaning = parseOf('olive oil', { amount: 1, unit: 'tbsp', prep: 'warmed', optional: true });
+
+    expect(withMeaning(fresh, meaning)).toEqual({ ...fresh, ingredient: 'olive oil', prep: 'warmed', optional: true, doubt: null });
   });
 });

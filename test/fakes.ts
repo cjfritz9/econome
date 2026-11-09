@@ -6,8 +6,9 @@ import type { ParsedLine, ParsedLines } from '../src/data/parsed-lines.ts';
 import type { Ingredient, Recipe } from '../src/data/recipes.ts';
 import type { Claude } from '../src/llm/claude.ts';
 import type { LineParse } from '../src/llm/parse-ingredients.ts';
+import type { FdcFood, FoodData } from '../src/sources/fdc.ts';
 
-export const household: Household = { id: 'h1', name: 'Home', members: ['cj'], settings: {} };
+export const household: Household = { id: 'h1', name: 'Home', members: ['uid1'], settings: {} };
 
 export const parseOf = (ingredient: string, overrides: Partial<LineParse> = {}): LineParse => ({
   ingredient,
@@ -25,11 +26,17 @@ export const parseOf = (ingredient: string, overrides: Partial<LineParse> = {}):
   ...overrides,
 });
 
-export const parsedLine = (line: Ingredient, parse: LineParse, source: ParsedLine['source'] = 'claude'): ParsedLine => ({
+export const parsedLine = (
+  line: Ingredient,
+  parse: LineParse,
+  source: ParsedLine['source'] = 'claude',
+  recipeIds: string[] = [],
+): ParsedLine => ({
   key: lineKey(line),
   line,
   parse,
   source,
+  recipeIds,
 });
 
 export const recipeWith = (id: string, lines: Ingredient[]): Recipe => ({
@@ -69,6 +76,10 @@ export const entry = (name: string, overrides: Partial<IngredientEntry> = {}): I
   aliases: [],
   buying: null,
   comesWith: null,
+  food: null,
+  fdcQuery: null,
+  gramsPerMl: null,
+  unitWeights: {},
   ...overrides,
 });
 
@@ -86,7 +97,7 @@ export const memoryIngredients = (initial: IngredientEntry[] = []) => {
   return { store, stored };
 };
 
-export const note = (path: string, content: string): Note => ({ path, content, updatedBy: 'cj', updatedAt: '2026-11-08T12:00:00.000Z' });
+export const note = (path: string, content: string): Note => ({ path, content, updatedBy: 'uid1', updatedAt: '2026-11-08T12:00:00.000Z' });
 
 export const memoryNotes = (initial: Note[] = []) => {
   const stored = new Map(initial.map((saved) => [saved.path, saved]));
@@ -100,4 +111,25 @@ export const memoryNotes = (initial: Note[] = []) => {
     },
   };
   return { store, stored };
+};
+
+export const fdcFood = (fdcId: number, description: string, overrides: Partial<FdcFood> = {}): FdcFood => ({
+  fdcId,
+  description,
+  dataType: 'SR Legacy',
+  per100g: { kcal: 100, protein: 10, carbs: 5, sugar: 1, fiber: 2, fat: 4 },
+  portions: [],
+  ...overrides,
+});
+
+export const fakeFoodData = (byQuery: Record<string, FdcFood[]>) => {
+  const queries: string[] = [];
+  const foodData: FoodData = {
+    candidates: async (query) => {
+      queries.push(query);
+      return byQuery[query] ?? [];
+    },
+    food: async (fdcId) => Object.values(byQuery).flat().find((food) => food.fdcId === fdcId) ?? null,
+  };
+  return { foodData, queries };
 };

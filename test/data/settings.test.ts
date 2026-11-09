@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_DAILY_CLAUDE_CAP_USD, SettingsSchema, toUpdatePaths, withDefaults } from '../../src/data/settings.ts';
+import {
+  DEFAULT_DAILY_CLAUDE_CAP_USD,
+  DEFAULT_PLANNING_DIRECTIVE,
+  SettingsSchema,
+  toUpdatePaths,
+  withDefaults,
+} from '../../src/data/settings.ts';
 
 describe('SettingsSchema', () => {
   it('accepts a complete set of settings', () => {
@@ -8,6 +14,7 @@ describe('SettingsSchema', () => {
       dailyClaudeCapUsd: 0.5,
       weeklyCapUsd: 150,
       hungryroot: { deliveryDay: 'monday', cutoffDay: 'thursday', cutoffTime: '19:00' },
+      planningDirective: 'directives/cutting.md',
     };
 
     expect(SettingsSchema.parse(settings)).toEqual(settings);
@@ -19,6 +26,7 @@ describe('SettingsSchema', () => {
     ['a misspelled weekday', { hungryroot: { deliveryDay: 'mondy' } }],
     ['a zero Claude cap', { dailyClaudeCapUsd: 0 }],
     ['a negative weekly cap', { weeklyCapUsd: -20 }],
+    ['a planning directive outside directives/', { planningDirective: 'planning.md' }],
   ])('rejects %s', (_label, settings) => {
     expect(SettingsSchema.safeParse(settings).success).toBe(false);
   });
@@ -50,5 +58,10 @@ describe('withDefaults', () => {
 
   it('keeps a cap the household chose', () => {
     expect(withDefaults({ dailyClaudeCapUsd: 0.25 }).dailyClaudeCapUsd).toBe(0.25);
+  });
+
+  it('always has a planning directive, the general one unless the household chose another', () => {
+    expect(withDefaults({}).planningDirective).toBe(DEFAULT_PLANNING_DIRECTIVE);
+    expect(withDefaults({ planningDirective: 'directives/cutting.md' }).planningDirective).toBe('directives/cutting.md');
   });
 });
