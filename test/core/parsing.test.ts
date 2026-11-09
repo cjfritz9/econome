@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { lineKey } from '../../src/core/ingredient-lines.ts';
-import { parseRecipes, undecidedIngredients, unsureLines } from '../../src/core/parsing.ts';
+import { parseRecipes, undecidedIngredients, unsureLines, withNameCheck } from '../../src/core/parsing.ts';
 import { SpendCapError, type Claude } from '../../src/llm/claude.ts';
 import {
   answeringClaude,
@@ -218,5 +218,47 @@ describe('undecidedIngredients', () => {
       'extra-firm tofu',
       'garlic',
     ]);
+  });
+});
+
+describe('withNameCheck', () => {
+  const aliasesOf = new Map([['green onion', ['scallion']]]);
+
+  it('leaves a line that names its food alone', () => {
+    const parse = parseOf('extra-firm tofu');
+
+    expect(withNameCheck(parse, 'extra firm tofu, pressed', aliasesOf)).toBe(parse);
+  });
+
+  it('accepts a line that names one of the food’s aliases', () => {
+    expect(withNameCheck(parseOf('green onion'), 'scallions, sliced', aliasesOf).doubt).toBeNull();
+  });
+
+  it("asks about a line filed under a food it doesn't name", () => {
+    expect(withNameCheck(parseOf('plant-based chicken style bites'), 'breaded vegan chicken nuggets', aliasesOf).doubt).toBe(
+      'Filed under "plant-based chicken style bites", which the line doesn\'t name: is it the same food?',
+    );
+  });
+
+  it("keeps Claude's own doubt and adds the question", () => {
+    const parse = parseOf('olive oil', { doubt: 'Guessed the kind of oil.' });
+
+    expect(withNameCheck(parse, 'oil', aliasesOf).doubt).toBe(
+      'Guessed the kind of oil. Filed under "olive oil", which the line doesn\'t name: is it the same food?',
+    );
+  });
+});
+
+describe('parseRecipes name check', () => {
+  it('marks a new line filed under a food it does not name as unsure', async () => {
+    const { store, stored } = memoryParsedLines();
+    const nuggets = { amount: 16, unit: 'oz', name: 'breaded vegan chicken nuggets' };
+    const { claude } = answeringClaude(() => ({ lines: [{ line: 1, ...parseOf('plant-based chicken style bites') }] }));
+
+    await parseRecipes({ claude, parsedLines: store, ingredients: memoryIngredients().store, notes: memoryNotes().store }, household, [
+      recipeWith('a', [nuggets]),
+    ]);
+
+    expect(stored.get(lineKey(nuggets))?.parse.doubt).toMatch(/^Filed under "plant-based chicken style bites"/);
   });
 });

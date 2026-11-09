@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatLine, lineKey, recipesWithLine, uniqueLines } from '../../src/core/ingredient-lines.ts';
+import { formatLine, lineKey, lineNames, recipesWithLine, uniqueLines } from '../../src/core/ingredient-lines.ts';
 import type { Recipe } from '../../src/data/recipes.ts';
 
 const garlic = { amount: 2, unit: 'cloves', name: 'garlic, minced' };
@@ -60,5 +60,25 @@ describe('uniqueLines', () => {
     };
 
     expect(uniqueLines(recipe).map(({ line }) => line.name)).toEqual(['garlic, minced', 'salt']);
+  });
+});
+
+describe('lineNames', () => {
+  it.each([
+    ['Extra firm tofu, pressed', 'extra-firm tofu'],
+    ['large English cucumbers', 'english cucumber'],
+    ['ripe tomatoes', 'tomato'],
+    ['jalapeño, diced', 'jalapeno'],
+    ['fresh basil or parsley', 'basil'],
+  ])('finds "%s" names %s', (line, food) => {
+    expect(lineNames(line, food)).toBe(true);
+  });
+
+  it.each([
+    ['breaded vegan chicken nuggets or strips', 'plant-based chicken style bites'],
+    ['scallions, chopped', 'green onion'],
+    ['oil', 'olive oil'],
+  ])('finds "%s" does not name %s', (line, food) => {
+    expect(lineNames(line, food)).toBe(false);
   });
 });

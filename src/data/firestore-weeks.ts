@@ -19,5 +19,9 @@ export const firestoreWeeks = (db: Firestore): Weeks => {
           { merge: true },
         );
     },
+
+    saveHave: async (householdId, weekId, have) => {
+      await weeks(householdId).doc(weekId).set({ have }, { merge: true });
+    },
   };
 };

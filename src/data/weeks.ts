@@ -37,6 +37,10 @@ const WeekDocSchema = z.object({
   meals: z.array(PlannedMealSchema).nullish().transform(orEmpty),
   hungryroot: z.array(HungryrootMealSchema).nullish().transform(orEmpty),
   targets: MealTargets.nullish().transform((targets) => targets ?? {}),
+  have: z
+    .record(z.string(), z.boolean())
+    .nullish()
+    .transform((have) => have ?? {}),
 });
 
 export type PlannedMeal = z.infer<typeof PlannedMealSchema>;
@@ -62,6 +66,7 @@ export interface WeekPlan {
 export interface Weeks {
   findWeekDocs: (householdId: string, weekIds: string[]) => Promise<WeekDoc[]>;
   savePlan: (householdId: string, weekId: string, plan: WeekPlan, plannedBy: string) => Promise<void>;
+  saveHave: (householdId: string, weekId: string, have: Record<string, boolean>) => Promise<void>;
 }
 
 export interface PlannedWeek {
@@ -69,7 +74,10 @@ export interface PlannedWeek {
   meals: PlannedMeal[];
   hungryroot: HungryrootMeal[];
   targets: MealTargets;
+  have: Record<string, boolean>;
 }
+
+export const emptyWeek = () => ({ meals: [], hungryroot: [], targets: {}, have: {} });
 
 export const loadWeeks = async (weeks: Weeks, householdId: string, wanted: CalendarWeek[]): Promise<PlannedWeek[]> => {
   const docs = await weeks.findWeekDocs(
@@ -77,7 +85,7 @@ export const loadWeeks = async (weeks: Weeks, householdId: string, wanted: Calen
     wanted.map((week) => week.id),
   );
   const byId = new Map(docs.map((doc) => [doc.id, WeekDocSchema.parse(doc.data)]));
-  return wanted.map((week) => ({ week, ...(byId.get(week.id) ?? { meals: [], hungryroot: [], targets: {} }) }));
+  return wanted.map((week) => ({ week, ...(byId.get(week.id) ?? emptyWeek()) }));
 };
 
 export const planMeals = (recipes: Recipe[], requests: MealRequest[]): PlannedMeal[] => {

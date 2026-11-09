@@ -4,9 +4,16 @@ import { asRules, INGREDIENT_NOTES, notesAbout, type Notes } from '../data/notes
 import { indexByLine, meaningsFor, withMeaning, withRecipes, type ParsedLine, type ParsedLines } from '../data/parsed-lines.ts';
 import type { Recipe } from '../data/recipes.ts';
 import { SpendCapError, type Claude } from '../llm/claude.ts';
-import { parseLines } from '../llm/parse-ingredients.ts';
+import { parseLines, type LineParse } from '../llm/parse-ingredients.ts';
 import { logger } from '../logger.ts';
-import { formatLine, normalizeText, uniqueLines } from './ingredient-lines.ts';
+import { formatLine, lineNames, normalizeText, uniqueLines } from './ingredient-lines.ts';
+
+export const withNameCheck = (parse: LineParse, lineName: string, aliasesOf: Map<string, string[]>): LineParse => {
+  const names = [parse.ingredient, ...(aliasesOf.get(parse.ingredient) ?? [])];
+  if (names.some((name) => lineNames(lineName, name))) return parse;
+  const check = `Filed under "${parse.ingredient}", which the line doesn't name: is it the same food?`;
+  return { ...parse, doubt: parse.doubt ? `${parse.doubt} ${check}` : check };
+};
 
 export interface ParseRun {
   parsed: number;
@@ -36,6 +43,7 @@ export const parseRecipes = async (
   const rules = asRules(notesAbout(allNotes, INGREDIENT_NOTES));
   const lines = indexByLine(stored);
   const aliases = aliasMap(entries);
+  const aliasesOf = new Map(entries.map(({ name, aliases: names }) => [name, names]));
 
   const stamped = new Map<string, ParsedLine>();
   for (const recipe of recipes) {
@@ -71,7 +79,7 @@ export const parseRecipes = async (
         const meaning = meanings.get(normalizeText(entry.line.name));
         return meaning
           ? { ...entry, parse: withAliases(withMeaning(entry.parse, meaning), aliases), source: 'corrected', recipeIds: [recipe.id] }
-          : { ...entry, parse: withAliases(entry.parse, aliases), source: 'claude', recipeIds: [] };
+          : { ...entry, parse: withNameCheck(withAliases(entry.parse, aliases), entry.line.name, aliasesOf), source: 'claude', recipeIds: [] };
       });
       run.carried += parsed.filter(({ source }) => source === 'corrected').length;
       await parsedLines.save(household.id, parsed);

@@ -5,6 +5,7 @@ import { matchFoods } from '../core/food-matching.ts';
 import { recipeNutrition } from '../core/nutrition.ts';
 import { formatLine, normalizeText, recipesWithLine } from '../core/ingredient-lines.ts';
 import { parseRecipes, undecidedIngredients, unsureLines } from '../core/parsing.ts';
+import { buildList } from '../core/shopping-list.ts';
 import { ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
 import type { Decisions } from '../data/decisions.ts';
 import { requireHousehold, type Household, type Households } from '../data/household.ts';
@@ -26,6 +27,7 @@ import { correctLine, indexByLine, ingredientIndex, renameIngredient, withRecipe
 import { NOT_A_MEAL_TAG, readLibrary, withTag, type Recipes } from '../data/recipes.ts';
 import { SettingsSchema, toUpdatePaths, withDefaults } from '../data/settings.ts';
 import {
+  emptyWeek,
   lastPlannedDates,
   loadWeeks,
   MealSlot,
@@ -118,7 +120,7 @@ export const createServer = ({
   claude,
   actingUid,
 }: ServerDeps) => {
-  const server = new McpServer({ name: 'econome', version: '0.14.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'econome', version: '0.16.0' }, { instructions: INSTRUCTIONS });
 
   const member = async () => {
     await requireFeature(access, actingUid, ECONOME_FEATURE);
@@ -271,7 +273,7 @@ export const createServer = ({
       const meals = planMeals(library.recipes, requests);
       const box = hungryroot?.map(({ title, servings, day, slot }) => ({ title, servings, ...(day && { day }), ...(slot && { slot }) }));
       await weeks.savePlan(household.id, week.id, { meals, ...(box && { hungryroot: box }), ...(targets && { targets }) }, actingUid);
-      const [saved = { week, meals, hungryroot: box ?? [], targets: targets ?? {} }] = await loadWeeks(weeks, household.id, [week]);
+      const [saved = { week, ...emptyWeek(), meals }] = await loadWeeks(weeks, household.id, [week]);
       return jsonResult(weekResult(saved, household));
     },
   );
@@ -286,8 +288,93 @@ export const createServer = ({
     async ({ week: date }) => {
       const household = await member();
       const week = chooseWeek(household.settings.timezone, date);
-      const [planned = { week, meals: [], hungryroot: [], targets: {} }] = await loadWeeks(weeks, household.id, [week]);
+      const [planned = { week, ...emptyWeek() }] = await loadWeeks(weeks, household.id, [week]);
       return jsonResult(weekResult(planned, household));
+    },
+  );
+
+  const weekList = async (household: Household, date: string | undefined, { parse }: { parse: boolean }) => {
+    const week = chooseWeek(household.settings.timezone, date);
+    const [[planned], docs] = await Promise.all([loadWeeks(weeks, household.id, [week]), recipes.listRecipeDocs(household.id)]);
+    if (!planned || planned.meals.length === 0) throw new Error(`Nothing from Mise is planned for ${week.id} yet; plan it with plan_week first.`);
+
+    const library = readLibrary(docs);
+    const planIds = new Set(planned.meals.map(({ recipeId }) => recipeId));
+    const cooked = library.recipes.filter(({ id }) => planIds.has(id));
+    const run = parse
+      ? await parseRecipes({ claude, parsedLines, ingredients, notes }, household, cooked)
+      : { stopped: null, failed: [], lines: indexByLine(await parsedLines.list(household.id)) };
+    const list = buildList(planned.meals, cooked, run.lines, await ingredients.list(household.id), planned.have);
+
+    const titles = new Map(cooked.map(({ id, title }) => [id, title]));
+    const warnings = [
+      ...(run.stopped ? [`Parsing stopped: ${run.stopped}`] : []),
+      ...run.failed.map(({ recipeId, reason }) => `${titles.get(recipeId) ?? recipeId} couldn't be parsed: ${reason}`),
+      ...library.skippedLines
+        .filter(({ id }) => planIds.has(id))
+        .map(({ id, line, reason }) => `${titles.get(id) ?? id}: ${line} was left out of the recipe, to fix in Mise: ${reason}`),
+      ...unsureLines(cooked, run.lines).map(
+        ({ line, recipes: inRecipes, ingredient, doubt }) => `Check "${line}" (${inRecipes.join(', ')}), read as ${ingredient}: ${doubt}`,
+      ),
+      ...list.warnings,
+    ];
+    return {
+      week,
+      result: {
+        week: week.id,
+        meals: planned.meals.map(({ title }) => title),
+        ...(planned.hungryroot.length > 0 && { hungryroot: planned.hungryroot.map(({ title }) => title) }),
+        buy: list.buy,
+        probablyHave: list.probablyHave,
+        have: list.have,
+        decide: list.decide,
+        notBought: list.notBought,
+        warnings,
+      },
+    };
+  };
+
+  server.registerTool(
+    'build_list',
+    {
+      description:
+        "Build a week's shopping list from its planned Mise meals: each recipe as written, merged by ingredient, with every recipe's amount under uses. Lines not parsed yet are parsed first. buy holds what's bought weekly and staples marked running low, with buy giving whole items where the need isn't whole. probablyHave holds staples, usually on hand: ask which are running low. have holds what the household said it already has this week. decide holds ingredients whose buying isn't settled: ask, then record it with set_buying. notBought holds what's never bought on its own. Record the answers with mark_have. warnings names everything left out or uncertain: show them all. The Hungryroot box's recipes add nothing, since the box brings their ingredients.",
+      inputSchema: z.object({ week: WeekDate }),
+    },
+    async ({ week: date }) => jsonResult((await weekList(await member(), date, { parse: true })).result),
+  );
+
+  server.registerTool(
+    'mark_have',
+    {
+      description:
+        "Record what the household has on hand this week, by ingredient names from build_list. have: already on hand, so it moves to have and isn't bought (a staple confirmed, or a weekly item left over). need: a staple running low, so it moves to buy. Answers apply to this week only; mark an ingredient again to change its answer. Returns the updated list.",
+      inputSchema: z.object({
+        week: WeekDate,
+        have: z.array(z.string().min(1)).optional().describe('Ingredients already on hand'),
+        need: z.array(z.string().min(1)).optional().describe('Staples running low, to buy this week'),
+      }),
+    },
+    async ({ week: date, have = [], need = [] }) => {
+      const household = await member();
+      if (have.length + need.length === 0) throw new Error('Name at least one ingredient under have or need.');
+      const both = have.filter((name) => need.includes(name));
+      if (both.length > 0) throw new Error(`These are under both have and need: ${both.join(', ')}.`);
+
+      const { week, result } = await weekList(household, date, { parse: false });
+      const listed = new Set(
+        [result.buy, result.probablyHave, result.have, result.decide].flatMap((section) => section.map(({ ingredient }) => ingredient)),
+      );
+      const unknown = [...have, ...need].filter((name) => !listed.has(name));
+      if (unknown.length > 0) {
+        throw new Error(`These aren't on ${week.id}'s list: ${unknown.join(', ')}. Use the names build_list shows.`);
+      }
+
+      await weeks.saveHave(household.id, week.id, {
+        ...Object.fromEntries(have.map((name) => [name, true])),
+        ...Object.fromEntries(need.map((name) => [name, false])),
+      });
+      return jsonResult((await weekList(household, date, { parse: false })).result);
     },
   );
 

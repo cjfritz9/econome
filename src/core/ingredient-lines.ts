@@ -80,3 +80,19 @@ export const recipesWithLine = (recipes: Recipe[], line: Ingredient) => {
   const key = lineKey(line);
   return recipes.filter((recipe) => uniqueLines(recipe).some((keyed) => keyed.key === key)).map(({ id }) => id);
 };
+
+const words = (text: string) =>
+  text
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+
+const forms = (word: string) => [word, `${word}s`, `${word}es`];
+const sameWord = (a: string, b: string) => forms(a).includes(b) || forms(b).includes(a);
+
+export const lineNames = (lineName: string, food: string) => {
+  const said = words(lineName);
+  return words(food).every((word) => said.some((other) => sameWord(word, other)));
+};

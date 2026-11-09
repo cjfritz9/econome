@@ -65,6 +65,7 @@ describe('loadWeeks', () => {
     findWeekDocs: async (_householdId, weekIds) =>
       weekIds.filter((id) => id in docs).map((id) => ({ id, data: docs[id] })),
     savePlan: async () => {},
+    saveHave: async () => {},
   });
 
   it('returns every week asked for, empty when nothing is planned', async () => {
@@ -72,8 +73,8 @@ describe('loadWeeks', () => {
     const loaded = await loadWeeks(store({ '2026-W46': { meals: [meal('tofu-steaks')] } }), 'h1', weeks);
 
     expect(loaded).toEqual([
-      { week: weeks[0], meals: [meal('tofu-steaks')], hungryroot: [], targets: {} },
-      { week: weeks[1], meals: [], hungryroot: [], targets: {} },
+      { week: weeks[0], meals: [meal('tofu-steaks')], hungryroot: [], targets: {}, have: {} },
+      { week: weeks[1], meals: [], hungryroot: [], targets: {}, have: {} },
     ]);
   });
 
@@ -84,6 +85,12 @@ describe('loadWeeks', () => {
     ]);
 
     expect(loaded).toMatchObject({ hungryroot: box, targets: { lunch: 6 } });
+  });
+
+  it("reads the week's have answers", async () => {
+    const [loaded] = await loadWeeks(store({ '2026-W46': { meals: [], have: { 'soy sauce': false } } }), 'h1', [weekOf('2026-11-09')]);
+
+    expect(loaded?.have).toEqual({ 'soy sauce': false });
   });
 
   it('reads a week without meals as empty', async () => {
