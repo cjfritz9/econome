@@ -11,10 +11,13 @@ export const firestoreWeeks = (db: Firestore): Weeks => {
       return snaps.filter((snap) => snap.exists).map((snap) => ({ id: snap.id, data: snap.data() }));
     },
 
-    saveMeals: async (householdId, weekId, meals, plannedBy) => {
+    savePlan: async (householdId, weekId, { meals, hungryroot, targets }, plannedBy) => {
       await weeks(householdId)
         .doc(weekId)
-        .set({ meals, plannedBy, plannedAt: Timestamp.now() }, { merge: true });
+        .set(
+          { meals, ...(hungryroot && { hungryroot }), ...(targets && { targets }), plannedBy, plannedAt: Timestamp.now() },
+          { merge: true },
+        );
     },
   };
 };

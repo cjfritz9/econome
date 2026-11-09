@@ -7,7 +7,7 @@ import { formatLine, normalizeText, recipesWithLine } from '../core/ingredient-l
 import { parseRecipes, undecidedIngredients, unsureLines } from '../core/parsing.ts';
 import { ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
 import type { Decisions } from '../data/decisions.ts';
-import { requireHousehold, type Households } from '../data/household.ts';
+import { requireHousehold, type Household, type Households } from '../data/household.ts';
 import {
   addAlias,
   BUYING,
@@ -25,7 +25,16 @@ import { INGREDIENT_NOTES, NoteContent, NotePath, type Notes } from '../data/not
 import { correctLine, indexByLine, ingredientIndex, renameIngredient, withRecipes, type ParsedLines } from '../data/parsed-lines.ts';
 import { NOT_A_MEAL_TAG, readLibrary, withTag, type Recipes } from '../data/recipes.ts';
 import { SettingsSchema, toUpdatePaths, withDefaults } from '../data/settings.ts';
-import { lastPlannedDates, loadWeeks, planMeals, type PlannedWeek, type Weeks } from '../data/weeks.ts';
+import {
+  lastPlannedDates,
+  loadWeeks,
+  MealSlot,
+  MealTargets,
+  planMeals,
+  weekCoverage,
+  type PlannedWeek,
+  type Weeks,
+} from '../data/weeks.ts';
 import type { Claude, SpendLedger } from '../llm/claude.ts';
 import { LineParseSchema, UNITS } from '../llm/parse-ingredients.ts';
 import type { FoodData } from '../sources/fdc.ts';
@@ -58,7 +67,7 @@ When something looks wrong or unclear, such as a line that doesn't say what to b
 
 A recipe's ingredient list is the source of truth, and Économe never reads its steps. When a line in a recipe is itself wrong or vague, suggest fixing it in Mise, so the recipe is right for whoever cooks it.
 
-Read the notes with read_notes before planning a week or settling an ingredient question. Planning and recipe suggestions follow the household's planning directive, the note get_household names as settings.planningDirective. It's always in effect; the household changes it by editing that note with write_note, or swaps it by pointing planningDirective at another note under directives/ with update_settings. Suggested swaps must make sense in the dish, and are only suggestions until someone says yes.
+Read the notes with read_notes before planning a week or settling an ingredient question. Read the week with get_week before planning it: its coverage counts servings, one person's meal each, against the household's meal targets, with the Hungryroot box's recipes first and dinner leftovers as lunches, and leftToPlan says what's still to fill. Planning and recipe suggestions follow the household's planning directive, the note get_household names as settings.planningDirective. It's always in effect; the household changes it by editing that note with write_note, or swaps it by pointing planningDirective at another note under directives/ with update_settings. Suggested swaps must make sense in the dish, and are only suggestions until someone says yes.
 
 Nutrition is an estimate: each ingredient is matched once to a USDA FoodData Central food with match_foods. A wrong match is fixed with search_foods and set_food, a name FoodData Central spells differently (lemongrass as "lemon grass") with set_food_search, and a wrong weight (one cup, one piece, one can) with set_unit_weight.`;
 
@@ -78,7 +87,22 @@ const jsonResult = (value: unknown) => ({
   content: [{ type: 'text' as const, text: JSON.stringify(value, null, 2) }],
 });
 
-const weekResult = ({ week, meals }: PlannedWeek) => ({ week: week.id, start: week.start, end: week.end, meals });
+const weekResult = ({ week, meals, hungryroot, targets: own }: PlannedWeek, household: Household) => {
+  const targets = { ...household.settings.mealTargets, ...own };
+  return {
+    week: week.id,
+    start: week.start,
+    end: week.end,
+    meals,
+    hungryroot,
+    targets,
+    coverage: weekCoverage({ meals, hungryroot }, household.members.length, targets),
+  };
+};
+
+const SlotInput = MealSlot.optional().describe(
+  "The meal it's eaten as; dinner if left out. A dinner feeds each member once, and its other servings count as lunch leftovers",
+);
 
 export const createServer = ({
   access,
@@ -94,7 +118,7 @@ export const createServer = ({
   claude,
   actingUid,
 }: ServerDeps) => {
-  const server = new McpServer({ name: 'econome', version: '0.12.0' }, { instructions: INSTRUCTIONS });
+  const server = new McpServer({ name: 'econome', version: '0.14.0' }, { instructions: INSTRUCTIONS });
 
   const member = async () => {
     await requireFeature(access, actingUid, ECONOME_FEATURE);
@@ -210,41 +234,60 @@ export const createServer = ({
     'plan_week',
     {
       description:
-        "Save a week's meals, replacing whatever was planned for that week before, so send every meal each time. Each meal is a recipe id from list_recipes, with the servings to cook and optionally a day.",
+        "Save a week's meals, replacing whatever was planned for that week before, so send every meal each time. Each meal is a recipe id from list_recipes, cooked as written at the recipe's own servings, optionally with a day and which meal it's eaten as. Plan a recipe twice to cook it twice. Returns the week with its coverage against the meal targets.",
       inputSchema: z.object({
         week: WeekDate,
         meals: z
           .array(
             z.object({
               recipeId: z.string().min(1).describe('A recipe id from list_recipes'),
-              servings: z.number().positive().optional().describe("Servings to cook; the recipe's own if left out"),
               day: Weekday.optional().describe("The day it's planned for, if any"),
+              slot: SlotInput,
             }),
           )
-          .describe('Every meal for the week'),
+          .describe('Every meal for the week from Mise'),
+        hungryroot: z
+          .array(
+            z.object({
+              title: z.string().min(1),
+              servings: z.number().positive(),
+              day: Weekday.optional(),
+              slot: SlotInput,
+            }),
+          )
+          .optional()
+          .describe(
+            "The recipes in this week's Hungryroot box, from its order slip. They count toward the targets but add nothing to the list, since the box brings their ingredients; items no recipe uses are not meals. Replaces the box's recipes saved before; when left out, those are kept",
+          ),
+        targets: MealTargets.optional().describe(
+          "This week's own targets in servings, for the meals where they differ from the mealTargets setting",
+        ),
       }),
     },
-    async ({ week: date, meals: requests }) => {
+    async ({ week: date, meals: requests, hungryroot, targets }) => {
       const household = await member();
       const week = chooseWeek(household.settings.timezone, date);
       const library = readLibrary(await recipes.listRecipeDocs(household.id));
       const meals = planMeals(library.recipes, requests);
-      await weeks.saveMeals(household.id, week.id, meals, actingUid);
-      return jsonResult(weekResult({ week, meals }));
+      const box = hungryroot?.map(({ title, servings, day, slot }) => ({ title, servings, ...(day && { day }), ...(slot && { slot }) }));
+      await weeks.savePlan(household.id, week.id, { meals, ...(box && { hungryroot: box }), ...(targets && { targets }) }, actingUid);
+      const [saved = { week, meals, hungryroot: box ?? [], targets: targets ?? {} }] = await loadWeeks(weeks, household.id, [week]);
+      return jsonResult(weekResult(saved, household));
     },
   );
 
   server.registerTool(
     'get_week',
     {
-      description: "Show a week's planned meals.",
+      description:
+        "Show a week's planned meals, the Hungryroot box's recipes, its meal targets, and its coverage: servings planned for each meal against its target, with how many come from Hungryroot and from leftovers, and leftToPlan or over.",
       inputSchema: z.object({ week: WeekDate }),
     },
     async ({ week: date }) => {
       const household = await member();
       const week = chooseWeek(household.settings.timezone, date);
-      const [planned = { week, meals: [] }] = await loadWeeks(weeks, household.id, [week]);
-      return jsonResult(weekResult(planned));
+      const [planned = { week, meals: [], hungryroot: [], targets: {} }] = await loadWeeks(weeks, household.id, [week]);
+      return jsonResult(weekResult(planned, household));
     },
   );
 

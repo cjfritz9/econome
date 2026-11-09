@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { Weekday } from '../core/calendar.ts';
 import { NotePath } from './notes.ts';
+import { MealTargets } from './weeks.ts';
 
 export const SETTINGS_FIELD = 'econome';
 export const DEFAULT_DAILY_CLAUDE_CAP_USD = 1;
@@ -27,6 +28,9 @@ export const SettingsSchema = z.object({
     .optional()
     .describe(`Daily spending cap for Économe's own Claude calls, in US dollars (default ${DEFAULT_DAILY_CLAUDE_CAP_USD})`),
   weeklyCapUsd: z.number().positive().optional().describe('Weekly grocery budget the review compares against, in US dollars'),
+  mealTargets: MealTargets.optional().describe(
+    "Servings to plan in a usual week for each meal, one serving being one person's meal. Any week can set its own with plan_week",
+  ),
   planningDirective: NotePath.refine((path) => path.startsWith('directives/'), 'A planning directive is a note under directives/')
     .optional()
     .describe(`The note under directives/ that planning and recipe suggestions follow (default ${DEFAULT_PLANNING_DIRECTIVE})`),

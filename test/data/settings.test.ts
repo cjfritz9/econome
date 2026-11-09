@@ -15,6 +15,7 @@ describe('SettingsSchema', () => {
       weeklyCapUsd: 150,
       hungryroot: { deliveryDay: 'monday', cutoffDay: 'thursday', cutoffTime: '19:00' },
       planningDirective: 'directives/cutting.md',
+      mealTargets: { breakfast: 0, lunch: 8, dinner: 12 },
     };
 
     expect(SettingsSchema.parse(settings)).toEqual(settings);
@@ -27,6 +28,8 @@ describe('SettingsSchema', () => {
     ['a zero Claude cap', { dailyClaudeCapUsd: 0 }],
     ['a negative weekly cap', { weeklyCapUsd: -20 }],
     ['a planning directive outside directives/', { planningDirective: 'planning.md' }],
+    ['a negative meal target', { mealTargets: { dinner: -2 } }],
+    ['a fractional meal target', { mealTargets: { lunch: 2.5 } }],
   ])('rejects %s', (_label, settings) => {
     expect(SettingsSchema.safeParse(settings).success).toBe(false);
   });
