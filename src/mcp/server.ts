@@ -95,7 +95,7 @@ import type { ProductMemory, VeganLine } from '../data/product-memory.ts';
 import { registerStoreTools } from './store-tools.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
-export const SERVER_VERSION = '0.29.0';
+export const SERVER_VERSION = '0.30.0';
 
 export interface ServerDeps {
   access: Access;

@@ -40,7 +40,7 @@ export interface FoodData {
   branded: (query: string) => Promise<BrandedFood[]>;
 }
 
-const LABEL_RESULTS = 10;
+const LABEL_RESULTS = 50;
 
 const SearchSchema = z.object({ foods: z.array(z.object({ fdcId: z.number() })) });
 

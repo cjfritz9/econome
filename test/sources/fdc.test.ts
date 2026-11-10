@@ -89,7 +89,7 @@ describe('fdcClient', () => {
 
     const foods = await fdcClient('key', fetchJson).branded('Violife Mozzarella Shreds');
 
-    expect(bodies).toEqual([{ query: 'Violife Mozzarella Shreds', dataType: ['Branded'], pageSize: 10 }]);
+    expect(bodies).toEqual([{ query: 'Violife Mozzarella Shreds', dataType: ['Branded'], pageSize: 50 }]);
     expect(foods).toEqual([
       { fdcId: 1, description: 'JUST LIKE MOZZARELLA SHREDS', brand: 'Violife', owner: 'Upfield', ingredients: 'Filtered Water, Coconut Oil' },
       { fdcId: 2, description: 'EXTRA FIRM TOFU', brand: null, owner: null, ingredients: null },
