@@ -1,0 +1,32 @@
+# Runs on every push to main through the econome-deploy-on-push trigger, which sets _ALLOWED_ORIGINS.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', '${_IMAGE}:$COMMIT_SHA', '-t', '${_IMAGE}:latest', '.']
+
+  - name: gcr.io/cloud-builders/docker
+    args: ['push', '--all-tags', '${_IMAGE}']
+
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - econome
+      - --image=${_IMAGE}:$COMMIT_SHA
+      - --region=us-central1
+      - --service-account=econome-run@$PROJECT_ID.iam.gserviceaccount.com
+      - --allow-unauthenticated
+      - --min-instances=0
+      - --max-instances=2
+      - --timeout=60
+      - --memory=512Mi
+      - --set-env-vars=^@^FIREBASE_PROJECT_ID=$PROJECT_ID@LOG_LEVEL=info@ECONOME_ALLOWED_ORIGINS=${_ALLOWED_ORIGINS}
+      - --set-secrets=INSTACART_FILL_CART_ROUTINE_URL=econome-fill-routine-url:latest,INSTACART_FILL_CART_ROUTINE_TOKEN=econome-fill-routine-token:latest,ECONOME_ROUTINE_SECRET=econome-routine-secret:latest
+
+substitutions:
+  _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/econome/app
+  _ALLOWED_ORIGINS: ''
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true

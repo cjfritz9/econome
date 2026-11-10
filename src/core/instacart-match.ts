@@ -104,3 +104,9 @@ export const compareCart = (approved: CartLine[], inCart: InCart[]) => {
   const extra = inCart.filter(({ productId }) => !wanted.has(productId));
   return { matches: missing.length === 0 && differs.length === 0, missing, differs, extra };
 };
+
+export const connectorItems = (lines: CartLine[]) => {
+  const totals = new Map<string, number>();
+  for (const { productId, quantity } of lines) totals.set(productId, (totals.get(productId) ?? 0) + quantity);
+  return [...totals].map(([productId, quantity]) => ({ product_id: productId, quantity }));
+};

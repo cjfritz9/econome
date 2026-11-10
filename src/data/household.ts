@@ -1,4 +1,6 @@
-import { parseSettings, type Settings } from './settings.ts';
+import { householdToday } from '../core/calendar.ts';
+import { AccessError } from './access.ts';
+import { parseSettings, withDefaults, type Settings } from './settings.ts';
 
 export interface HouseholdRecord {
   id: string;
@@ -35,16 +37,40 @@ export const requireHousehold = async (
   uid: string,
 ): Promise<Household> => {
   const householdId = await households.findUserHouseholdId(uid);
-  if (!householdId) throw new Error(NO_HOUSEHOLD_MESSAGE);
+  if (!householdId) throw new AccessError(NO_HOUSEHOLD_MESSAGE);
 
   const record = await households.findHousehold(householdId);
-  if (!record) throw new Error(NO_HOUSEHOLD_MESSAGE);
-  if (!record.members.includes(uid)) throw new Error(NOT_A_MEMBER_MESSAGE);
+  if (!record) throw new AccessError(NO_HOUSEHOLD_MESSAGE);
+  if (!record.members.includes(uid)) throw new AccessError(NOT_A_MEMBER_MESSAGE);
 
   return {
     id: record.id,
     name: record.name,
     members: record.members,
     settings: parseSettings(record.econome),
+  };
+};
+
+export interface DailySpend {
+  spentOn: (householdId: string, day: string) => Promise<number>;
+}
+
+export const describeHousehold = async (
+  household: Household,
+  households: Pick<Households, 'findMemberProfiles'>,
+  spend: DailySpend,
+  now = new Date(),
+) => {
+  const settings = withDefaults(household.settings);
+  const [members, spentToday] = await Promise.all([
+    households.findMemberProfiles(household.members),
+    spend.spentOn(household.id, householdToday(settings.timezone, now)),
+  ]);
+  return {
+    id: household.id,
+    name: household.name,
+    members,
+    settings,
+    claudeSpendToday: { usd: Number(spentToday.toFixed(4)), cap: settings.dailyClaudeCapUsd },
   };
 };

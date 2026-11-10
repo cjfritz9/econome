@@ -45,17 +45,20 @@ const CartLineSchema = z.object({
 
 const InCartSchema = z.object({ productId: z.string(), quantity: z.number().positive(), name: z.string().nullable().default(null) });
 
+const SentSchema = z.object({ fillId: z.string(), sessionId: z.string(), by: z.string(), error: z.string().nullable().default(null) });
+
 export const InstacartSectionSchema = z.object({
   retailer: z.string().nullable().default(null),
   approved: z.object({ lines: z.array(CartLineSchema), listHash: z.string(), by: z.string() }).nullable().default(null),
-  filled: z.object({ by: z.string(), lines: z.array(InCartSchema) }).nullable().default(null),
+  sent: SentSchema.nullable().default(null),
+  filled: z.object({ by: z.string(), lines: z.array(InCartSchema), fillId: z.string().nullable().default(null) }).nullable().default(null),
   checkedOut: z.object({ by: z.string() }).nullable().default(null),
 });
 
 export type InstacartSection = z.infer<typeof InstacartSectionSchema>;
 export type CartLine = z.infer<typeof CartLineSchema>;
 export type InCart = z.infer<typeof InCartSchema>;
-export const emptyInstacartSection = (): InstacartSection => ({ retailer: null, approved: null, filled: null, checkedOut: null });
+export const emptyInstacartSection = (): InstacartSection => ({ retailer: null, approved: null, sent: null, filled: null, checkedOut: null });
 
 const WeekDocSchema = z.object({
   meals: z.array(PlannedMealSchema).nullish().transform(orEmpty),

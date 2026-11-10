@@ -1,7 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import { chooseWeek } from '../core/calendar.ts';
-import { cartLines, compareCart, listHash, matchItem } from '../core/instacart-match.ts';
+import { cartLines, compareCart, connectorItems, listHash, matchItem } from '../core/instacart-match.ts';
 import { bestLabel, checkProduct, labelQuery, reviewHash } from '../core/product-check.ts';
 import type { ListItem } from '../core/shopping-list.ts';
 import { concernsToCount } from '../core/vegan.ts';
@@ -17,7 +17,7 @@ import {
   type RememberedProduct,
   type VeganLine,
 } from '../data/product-memory.ts';
-import { loadWeeks, type CartLine, type Weeks } from '../data/weeks.ts';
+import { loadWeeks, type Weeks } from '../data/weeks.ts';
 import type { FoodData } from '../sources/fdc.ts';
 import { inBatches, jsonResult, WeekDate } from './shared.ts';
 
@@ -39,12 +39,6 @@ interface StoreToolDeps {
 const ProductId = z.string().regex(/^\d+$/, "An Instacart product_id, as the Instacart connector's search shows it");
 const ProductName = z.string().min(1).describe("The product's name exactly as the Instacart connector shows it, brand included");
 const Ingredient = z.string().min(1).describe('The ingredient as build_list or list_ingredients shows it');
-
-const connectorItems = (lines: CartLine[]) => {
-  const totals = new Map<string, number>();
-  for (const { productId, quantity } of lines) totals.set(productId, (totals.get(productId) ?? 0) + quantity);
-  return [...totals].map(([productId, quantity]) => ({ product_id: productId, quantity }));
-};
 
 export const registerStoreTools = (
   server: McpServer,
@@ -287,6 +281,7 @@ export const registerStoreTools = (
       await weeks.saveInstacart(household.id, week.id, {
         retailer,
         approved: { lines, listHash: listHash(items), by: actingUid },
+        sent: null,
         filled: null,
         checkedOut: null,
       });
@@ -318,7 +313,7 @@ export const registerStoreTools = (
       const { week, section } = await weekSection(household, date);
       if (!section.approved) throw new Error(`${week.id}'s Instacart cart isn't approved yet; approve it with approve_instacart.`);
       const lines = items.map(({ productId, quantity, name }) => ({ productId, quantity, name: name ?? null }));
-      await weeks.saveInstacart(household.id, week.id, { ...section, filled: { by: actingUid, lines } });
+      await weeks.saveInstacart(household.id, week.id, { ...section, filled: { by: actingUid, lines, fillId: null } });
       const { buy } = await buyList(household, date);
       return jsonResult({
         week: week.id,

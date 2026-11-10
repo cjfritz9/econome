@@ -2,7 +2,6 @@ import { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import {
   chooseWeek,
-  householdToday,
   openBoxWeek,
   Weekday,
   weeksEndingWith
@@ -33,6 +32,7 @@ import {
 } from '../data/access.ts';
 import type { Decisions } from '../data/decisions.ts';
 import {
+  describeHousehold,
   requireHousehold,
   type Household,
   type Households
@@ -95,7 +95,7 @@ import type { ProductMemory, VeganLine } from '../data/product-memory.ts';
 import { registerStoreTools } from './store-tools.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
-export const SERVER_VERSION = '0.30.0';
+export const SERVER_VERSION = '0.31.0';
 
 export interface ServerDeps {
   access: Access;
@@ -215,27 +215,7 @@ export const createServer = ({
       description:
         "Show the household Économe is working for: its name, its members, Économe's settings, and what Économe has spent on Claude today against its daily cap."
     },
-    async () => {
-      const household = await member();
-      const settings = withDefaults(household.settings);
-      const [members, spentToday] = await Promise.all([
-        households.findMemberProfiles(household.members),
-        spend.spentOn(
-          household.id,
-          householdToday(settings.timezone, new Date())
-        )
-      ]);
-      return jsonResult({
-        id: household.id,
-        name: household.name,
-        members,
-        settings,
-        claudeSpendToday: {
-          usd: Number(spentToday.toFixed(4)),
-          cap: settings.dailyClaudeCapUsd
-        }
-      });
-    }
+    async () => jsonResult(await describeHousehold(await member(), households, spend))
   );
 
   server.registerTool(

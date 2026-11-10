@@ -8,6 +8,8 @@
   },
   "scripts": {
     "mcp": "node --env-file=.env --import tsx src/mcp/main.ts",
+    "http": "node --env-file=.env src/http/main.ts",
+    "id-token": "node --env-file=.env scripts/id-token.ts",
     "inspector": "pnpm dlx @modelcontextprotocol/inspector@latest -- pnpm --silent mcp",
     "test": "LOG_LEVEL=silent vitest run",
     "lint": "eslint .",
@@ -16,8 +18,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
+    "@hono/node-server": "^2.1.6",
     "@modelcontextprotocol/server": "^2.4.0",
     "firebase-admin": "^14.5.0",
+    "hono": "^4.13.17",
     "pino": "^10.4.0",
     "tsx": "^4.23.15",
     "zod": "^4.6.7"

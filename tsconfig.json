@@ -7,9 +7,10 @@
     "noUncheckedIndexedAccess": true,
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
+    "erasableSyntaxOnly": true,
     "noEmit": true,
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["src", "test"]
+  "include": ["src", "test", "scripts"]
 }
