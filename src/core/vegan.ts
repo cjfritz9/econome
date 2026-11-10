@@ -89,7 +89,7 @@ export const checkVegan = (
   if (!text) {
     return facts.categories.includes('Produce')
       ? { verdict: 'vegan', reasons: ['produce with no label'], source: 'produce' }
-      : { verdict: 'needs-review', reasons: ['Kroger has no ingredient list for it'], source: 'no ingredient list' };
+      : { verdict: 'needs-review', reasons: ['the store has no ingredient list for it'], source: 'no ingredient list' };
   }
 
   const denied = DENY.filter(([pattern]) => pattern.test(text)).map(([, name]) => `contains ${name}`);
@@ -114,3 +114,6 @@ export const checkVegan = (
   if (open.length === 0) return { verdict: 'vegan', reasons: concerns.map((reason) => `${concernKey(reason)}: OK by your past reviews`), source: 'your past reviews' };
   return { verdict: 'needs-review', reasons: open, source: 'ingredients' };
 };
+
+export const concernsToCount = ({ verdict, source, reasons }: VeganCheck) =>
+  verdict === 'needs-review' && source === 'ingredients' ? reasons.map(concernKey) : [];

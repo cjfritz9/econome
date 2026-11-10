@@ -41,6 +41,9 @@ export const SettingsSchema = z.object({
       modality: z.enum(['PICKUP', 'DELIVERY']).optional().describe("How the Kroger cart's items are fulfilled; Kroger's default is PICKUP"),
     })
     .optional(),
+  wholeFoods: z
+    .object({ storeId: z.number().int().positive().optional().describe('The Whole Foods store the household uses, such as 10257') })
+    .optional(),
   planningDirective: NotePath.refine((path) => path.startsWith('directives/'), 'A planning directive is a note under directives/')
     .optional()
     .describe(`The note under directives/ that planning and recipe suggestions follow (default ${DEFAULT_PLANNING_DIRECTIVE})`),

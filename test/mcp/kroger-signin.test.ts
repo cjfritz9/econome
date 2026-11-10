@@ -45,4 +45,19 @@ describe('signInListener', () => {
     expect(await page.text()).toMatch(/Kroger is connected/);
     expect(finished).toEqual(['xyz']);
   });
+
+  it('keeps listening after a stray request, so the real redirect still lands', async () => {
+    const finished: string[] = [];
+    const listener = signInListener(async (_signIn, code) => {
+      finished.push(code);
+    });
+    const { state } = await listener.start('h1', 'uid1');
+
+    const stray = await fetch(callback('stale'));
+    const real = await fetch(callback(state, '&code=real'));
+
+    expect(stray.status).toBe(400);
+    expect(real.status).toBe(200);
+    expect(finished).toEqual(['real']);
+  });
 });

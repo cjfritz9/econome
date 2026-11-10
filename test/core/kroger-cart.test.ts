@@ -21,6 +21,7 @@ const view = (upc: string, packages: number | null): ProductView & { source: 'yo
 const item = (ingredient: string, pick: MatchedItem['pick'], candidates: MatchedItem['candidates'] = []): MatchedItem => ({
   ingredient,
   need: '1 piece',
+  status: pick ? 'picked' : candidates.length > 0 ? 'choose' : 'gap',
   pick,
   candidates,
   notes: [],
@@ -41,6 +42,15 @@ describe('cartLines', () => {
       { ingredient: 'nori', why: 'not sold at this store' },
     ]);
     expect(needQuantity).toEqual(['garlic']);
+  });
+
+  it('takes the top in-stock vegan product for an unchosen item only when asked, and says which', () => {
+    const items = [
+      item('spinach', null, [{ ...view('0005', 1), stock: 'TEMPORARILY_OUT_OF_STOCK' }, { ...view('0006', 1), vegan: { verdict: 'non-vegan', reasons: [] } }, view('0007', 1)]),
+    ];
+
+    expect(cartLines(items).lines).toEqual([]);
+    expect(cartLines(items, {}, true)).toMatchObject({ lines: [{ ingredient: 'spinach', upc: '0007', quantity: 1 }], topMatched: ['spinach'] });
   });
 
   it("uses the household's quantity over the count", () => {

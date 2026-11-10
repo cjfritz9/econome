@@ -25,6 +25,7 @@ export interface ProductView {
 export interface MatchedItem {
   ingredient: string;
   need: string | null;
+  status: 'picked' | 'choose' | 'unavailable' | 'gap';
   pick: (ProductView & { source: 'your choice' | 'your alternate' }) | null;
   candidates: ProductView[];
   notes: string[];
@@ -33,7 +34,7 @@ export interface MatchedItem {
 export const inStock = ({ stock }: KrogerProduct) => stock !== OUT_OF_STOCK;
 
 export const veganCheckFor = (product: KrogerProduct, memory: RememberedProduct[], tallies: Map<string, ConcernTally>) => {
-  return checkVegan(product.label, tallies, reviewOf(memory, product.upc));
+  return checkVegan(product.label, tallies, reviewOf(memory, product.upc, 'kroger'));
 };
 
 const packagesOf = (product: KrogerProduct, item: ListItem, entry: IngredientEntry | undefined, covers: number | null) => {
@@ -73,27 +74,39 @@ export const matchItem = (
 ): MatchedItem => {
   const notes: string[] = [];
   const show = (product: KrogerProduct) => {
-    const covers = memory.find(({ upc, ingredient }) => upc === product.upc && ingredient === item.ingredient)?.covers ?? null;
+    const covers = memory.find(({ productId, ingredient }) => productId === product.upc && ingredient === item.ingredient)?.covers ?? null;
     return view(product, item, entry, veganCheckFor(product, memory, tallies), covers);
   };
   const usable = (upc: string) => {
     const product = remembered.get(upc);
     return product && inStock(product) ? product : null;
   };
+  const result = (status: MatchedItem['status'], pick: MatchedItem['pick'], candidates: ProductView[] = []): MatchedItem => ({
+    ingredient: item.ingredient,
+    need: item.need,
+    status,
+    pick,
+    candidates,
+    notes,
+  });
 
   const preferred = forIngredient(memory, item.ingredient, 'preferred');
   const alternates = forIngredient(memory, item.ingredient, 'alternate');
-  const choice = preferred.map(({ upc }) => usable(upc)).find(Boolean);
-  if (choice) return { ingredient: item.ingredient, need: item.need, pick: { ...show(choice), source: 'your choice' }, candidates: [], notes };
+  const choice = preferred.map(({ productId }) => usable(productId)).find(Boolean);
+  if (choice) return result('picked', { ...show(choice), source: 'your choice' });
 
-  for (const { upc } of preferred) {
-    notes.push(remembered.has(upc) ? `Your usual product (${upc}) is out of stock.` : `Your usual product (${upc}) isn't sold at this store now.`);
+  for (const { productId } of preferred) {
+    notes.push(remembered.has(productId) ? `Your usual product (${productId}) is out of stock.` : `Your usual product (${productId}) isn't sold at this store now.`);
   }
-  const alternate = alternates.map(({ upc }) => usable(upc)).find(Boolean);
-  if (alternate) return { ingredient: item.ingredient, need: item.need, pick: { ...show(alternate), source: 'your alternate' }, candidates: [], notes };
+  const alternate = alternates.map(({ productId }) => usable(productId)).find(Boolean);
+  if (alternate) return result('picked', { ...show(alternate), source: 'your alternate' });
 
-  const rejected = new Set(forIngredient(memory, item.ingredient, 'rejected').map(({ upc }) => upc));
+  const rejected = new Set(forIngredient(memory, item.ingredient, 'rejected').map(({ productId }) => productId));
   const candidates = found.filter(({ upc }) => !rejected.has(upc)).map(show);
-  if (candidates.length === 0) notes.push('Nothing found at this store: a gap for Whole Foods or an online order.');
-  return { ingredient: item.ingredient, need: item.need, pick: null, candidates, notes };
+  if (preferred.length > 0) return result('unavailable', null, candidates);
+  if (candidates.length === 0) {
+    notes.push('Nothing found at this store: it falls back to Whole Foods.');
+    return result('gap', null);
+  }
+  return result('choose', null, candidates);
 };

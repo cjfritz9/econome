@@ -45,13 +45,15 @@ export const signInListener = (complete: (signIn: PendingSignIn, code: string) =
           return;
         }
         finish(url.searchParams.get('state'), url.searchParams.get('code'), url.searchParams.get('error'))
-          .then(() => response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(page('Kroger is connected. You can close this tab and go back to the chat.')))
+          .then(() => {
+            response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }).end(page('Kroger is connected. You can close this tab and go back to the chat.'));
+            stop();
+          })
           .catch((error: unknown) => {
             logger.warn({ err: error }, 'Kroger sign-in failed');
             const message = error instanceof Error ? error.message : String(error);
             response.writeHead(400, { 'content-type': 'text/html; charset=utf-8' }).end(page(message));
-          })
-          .finally(stop);
+          });
       });
       next.once('error', reject);
       next.listen(PORT, 'localhost', () => {

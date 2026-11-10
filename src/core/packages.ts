@@ -12,6 +12,10 @@ type Size = { kind: 'count'; count: number } | { kind: 'grams'; grams: number } 
 
 const SIZE_UNITS: Record<string, { grams?: number; ml?: number; count?: true }> = {
   oz: { grams: 28.3495 },
+  ounce: { grams: 28.3495 },
+  ounces: { grams: 28.3495 },
+  pound: { grams: 453.592 },
+  pounds: { grams: 453.592 },
   onz: { grams: 28.3495 },
   lb: { grams: 453.592 },
   lbs: { grams: 453.592 },
@@ -78,15 +82,19 @@ const sizeGrams = (size: Size, { gramsPerMl }: Weights) => {
 const COUNTED_LIKE_ITEMS = new Set<Unit>(['piece', 'head', 'bunch', 'block', 'can', 'jar', 'package', 'bag', 'bottle', 'patty']);
 const CONTAINERS = new Set<Unit>(['block', 'can', 'jar', 'package', 'bag', 'bottle']);
 
-export const packagesCovering = (need: Need, covers: number) => Math.max(1, Math.ceil(need.value / covers - 1e-9));
+const SHORT_BY_AT_MOST = 0.1;
+
+const wholePackages = (ratio: number) => Math.max(1, Math.ceil(ratio * (1 - SHORT_BY_AT_MOST) - 1e-9));
+
+export const packagesCovering = (need: Need, covers: number) => wholePackages(need.value / covers);
 
 export const packagesFor = (need: Need, sizeText: string | null, weights: Weights): number | null => {
   const size = parseSize(sizeText);
   if (!size) return null;
   if (size.kind === 'count') return COUNTED_LIKE_ITEMS.has(need.unit) ? packagesCovering(need, size.count) : null;
-  if (size.kind === 'ml' && ML_PER[need.unit]) return Math.max(1, Math.ceil((need.value * (ML_PER[need.unit] ?? 0)) / size.ml - 1e-9));
+  if (size.kind === 'ml' && ML_PER[need.unit]) return wholePackages((need.value * (ML_PER[need.unit] ?? 0)) / size.ml);
   const wanted = needGrams(need, weights);
   const packaged = sizeGrams(size, weights);
-  if (wanted && packaged) return Math.max(1, Math.ceil(wanted / packaged - 1e-9));
+  if (wanted && packaged) return wholePackages(wanted / packaged);
   return CONTAINERS.has(need.unit) ? packagesCovering(need, 1) : null;
 };

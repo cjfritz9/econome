@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { matchItem } from '../../src/core/kroger-match.ts';
 import type { ListItem } from '../../src/core/shopping-list.ts';
-import { blankMemory, rememberedId, type RememberedProduct } from '../../src/data/product-memory.ts';
+import { blankMemory, RememberedProductSchema, rememberedId, type RememberedProduct } from '../../src/data/product-memory.ts';
 import type { KrogerProduct } from '../../src/sources/kroger.ts';
 import { ingredientsHash } from '../../src/core/vegan.ts';
 import { entry } from '../fakes.ts';
@@ -65,7 +65,7 @@ describe('matchItem', () => {
   it('offers search results without the products the household rejected', () => {
     const matched = match([remembered('0009', 'rejected')], [], [product('0009'), product('0003')]);
 
-    expect(matched.pick).toBeNull();
+    expect(matched).toMatchObject({ status: 'choose', pick: null });
     expect(matched.candidates.map(({ upc }) => upc)).toEqual(['0003']);
   });
 
@@ -94,13 +94,17 @@ describe('matchItem', () => {
   });
 
   it('names a gap when the store has nothing', () => {
-    expect(match([], []).notes).toEqual(['Nothing found at this store: a gap for Whole Foods or an online order.']);
+    const gap = match([], []);
+
+    expect(gap.status).toBe('gap');
+    expect(gap.notes).toEqual(['Nothing found at this store: it falls back to Whole Foods.']);
   });
 
   it("says when the usual product isn't sold at the store any more", () => {
-    expect(match([remembered('0001', 'preferred')], [], [product('0003')]).notes).toEqual([
-      "Your usual product (0001) isn't sold at this store now.",
-    ]);
+    const matched = match([remembered('0001', 'preferred')], [], [product('0003')]);
+
+    expect(matched.status).toBe('unavailable');
+    expect(matched.notes).toEqual(["Your usual product (0001) isn't sold at this store now."]);
   });
 });
 
@@ -109,5 +113,13 @@ describe('rememberedId', () => {
     expect(rememberedId('kroger', '0001115227641', 'furikake')).toBe('kroger_0001115227641_furikake');
     expect(rememberedId('kroger', '0001115227641', 'nori')).toBe('kroger_0001115227641_nori');
     expect(rememberedId('kroger', '0001115227641')).toBe('kroger_0001115227641');
+  });
+});
+
+describe('RememberedProductSchema', () => {
+  it('reads records saved with the old upc field as Kroger product ids', () => {
+    const legacy = { store: 'kroger', upc: '0001111091342', ingredient: 'tofu', role: 'preferred', reason: null, decidedBy: 'uid1', vegan: null };
+
+    expect(RememberedProductSchema.parse(legacy)).toMatchObject({ productId: '0001111091342', covers: null });
   });
 });

@@ -96,10 +96,11 @@ import type { KrogerSession } from '../core/kroger-session.ts';
 import type { ProductMemory, VeganLine } from '../data/product-memory.ts';
 import type { StoreAccounts } from '../data/store-accounts.ts';
 import type { KrogerAccount } from '../sources/kroger-account.ts';
-import { registerKrogerTools } from './kroger-tools.ts';
+import type { WholeFoods } from '../sources/whole-foods.ts';
+import { registerStoreTools } from './store-tools.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
-export const SERVER_VERSION = '0.21.0';
+export const SERVER_VERSION = '0.26.0';
 
 export interface ServerDeps {
   access: Access;
@@ -119,6 +120,7 @@ export interface ServerDeps {
   storeAccounts: StoreAccounts;
   krogerSession: KrogerSession | null;
   krogerAccount: KrogerAccount | null;
+  wholeFoods: WholeFoods;
   decisions: Decisions;
   claude: Claude;
   actingUid: string;
@@ -139,7 +141,7 @@ When something looks wrong or unclear, such as a line that doesn't say what to b
 
 A recipe's ingredient list is the source of truth, and Économe never reads its steps. When a line in a recipe is itself wrong or vague, suggest fixing it in Mise, so the recipe is right for whoever cooks it.
 
-Read the notes with read_notes before planning a week or settling an ingredient question. Read the week with get_week before planning it: its coverage counts servings, one person's meal each, against the household's meal targets, with the Hungryroot box's recipes first and dinner leftovers as lunches, and leftToPlan says what's still to fill. Planning and recipe suggestions follow the household's planning directive, the note get_household names as settings.planningDirective. It's always in effect; the household changes it by editing that note with write_note, or swaps it by pointing planningDirective at another note under directives/ with update_settings. Suggested swaps must make sense in the dish, and are only suggestions until someone says yes.
+Read the notes with read_notes before planning a week or settling an ingredient question. Propose a week's meals to the household and wait for its yes before saving them with plan_week, building the list or touching any cart; meals are the household's call. Read the week with get_week before planning it: its coverage counts servings, one person's meal each, against the household's meal targets, with the Hungryroot box's recipes first and dinner leftovers as lunches, and leftToPlan says what's still to fill. Planning and recipe suggestions follow the household's planning directive, the note get_household names as settings.planningDirective. It's always in effect; the household changes it by editing that note with write_note, or swaps it by pointing planningDirective at another note under directives/ with update_settings. Suggested swaps must make sense in the dish, and are only suggestions until someone says yes.
 
 The Hungryroot box is planned too: suggest_hungryroot_box finds candidates for the box still open before its cutoff, you choose by the directive and the household confirms or picks others, set_hungryroot_box saves what it confirmed with any swaps, and before the cutoff you show the box from get_week as a checklist for the household to compare with its cart in the Hungryroot app, then lock_hungryroot_box once it says the selections are locked in. Économe never touches the Hungryroot account itself.
 
@@ -193,6 +195,7 @@ export const createServer = ({
   storeAccounts,
   krogerSession,
   krogerAccount,
+  wholeFoods,
   decisions,
   claude,
   actingUid
@@ -529,6 +532,14 @@ export const createServer = ({
     };
   };
 
+  const shownList = <T extends Record<string, unknown>>(result: T) =>
+    Object.fromEntries(
+      Object.entries(result).map(([key, value]) => [
+        key,
+        Array.isArray(value) ? value.map((item: unknown) => (item && typeof item === 'object' && 'amount' in item ? { ...item, amount: undefined } : item)) : value,
+      ]),
+    );
+
   server.registerTool(
     'build_list',
     {
@@ -537,7 +548,7 @@ export const createServer = ({
       inputSchema: z.object({ week: WeekDate })
     },
     async ({ week: date }) =>
-      jsonResult((await weekList(await member(), date, { parse: true })).result)
+      jsonResult(shownList((await weekList(await member(), date, { parse: true })).result))
   );
 
   server.registerTool(
@@ -587,7 +598,7 @@ export const createServer = ({
         ...Object.fromEntries(need.map((name) => [name, false]))
       });
       return jsonResult(
-        (await weekList(household, date, { parse: false })).result
+        shownList((await weekList(household, date, { parse: false })).result)
       );
     }
   );
@@ -1392,7 +1403,7 @@ export const createServer = ({
     }
   );
 
-  registerKrogerTools(server, {
+  registerStoreTools(server, {
     member,
     kroger,
     productMemory,
@@ -1408,7 +1419,8 @@ export const createServer = ({
     },
     weeks,
     session: krogerSession,
-    account: krogerAccount
+    account: krogerAccount,
+    wholeFoods
   });
 
   return server;

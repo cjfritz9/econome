@@ -26,7 +26,13 @@ describe('parseSize', () => {
 
 describe('packagesFor', () => {
   it('rounds up to whole packages by weight, through the density for cups', () => {
-    expect(packagesFor({ value: 6, unit: 'cup' }, '12 oz', weights)).toBe(3);
+    expect(packagesFor({ value: 7, unit: 'cup' }, '12 oz', weights)).toBe(3);
+  });
+
+  it('allows packages to come up to 10% short rather than buying another', () => {
+    expect(packagesFor({ value: 2, unit: 'can', eachGrams: 425.24 }, '14.28 oz', weights)).toBe(2);
+    expect(packagesFor({ value: 6, unit: 'cup' }, '12 oz', weights)).toBe(2);
+    expect(packagesFor({ value: 2.5, unit: 'piece' }, '1 each', weights)).toBe(3);
   });
 
   it("uses a block's stated size", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkVegan, concernKey, ingredientsHash, type LabelFacts } from '../../src/core/vegan.ts';
+import { checkVegan, concernKey, concernsToCount, ingredientsHash, type LabelFacts } from '../../src/core/vegan.ts';
 
 const label = (overrides: Partial<LabelFacts> = {}): LabelFacts => ({
   ingredients: 'Water, Organic Soybeans, Calcium Sulfate.',
@@ -96,5 +96,15 @@ describe('checkVegan', () => {
 describe('concernKey', () => {
   it('names a concern by the part before its explanation', () => {
     expect(concernKey('Natural Flavors: may be animal-derived')).toBe('natural flavors');
+  });
+});
+
+describe('concernsToCount', () => {
+  it("counts the questionable ingredients a review answers, so they can be decided later", () => {
+    expect(concernsToCount(checkVegan(label({ ingredients: 'Water, Natural Flavors' })))).toEqual(['natural flavors']);
+  });
+
+  it('never counts a missing ingredient list, so products without one are always asked about', () => {
+    expect(concernsToCount(checkVegan(label({ ingredients: null })))).toEqual([]);
   });
 });

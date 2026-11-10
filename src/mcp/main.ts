@@ -24,6 +24,7 @@ import { tokenKey } from '../core/secrets.ts';
 import { firestoreStoreAccounts } from '../data/firestore-store-accounts.ts';
 import { krogerClient } from '../sources/kroger.ts';
 import { krogerAccount } from '../sources/kroger-account.ts';
+import { wholeFoods } from '../sources/whole-foods.ts';
 import { createServer, SERVER_VERSION } from './server.ts';
 
 const main = async () => {
@@ -56,6 +57,7 @@ const main = async () => {
     storeAccounts,
     krogerSession: session,
     krogerAccount: account,
+    wholeFoods: wholeFoods(SERVER_VERSION),
     decisions: firestoreDecisions(db),
     claude: createClaude({ send: anthropicSender(new Anthropic({ apiKey: config.anthropicApiKey })), ledger: spend }),
     actingUid: actingUser.uid,
