@@ -31,7 +31,6 @@ export const IngredientEntrySchema = z.object({
   food: FoodMatchSchema.nullable().default(null),
   fdcQuery: z.string().nullable().default(null),
   storeSearch: z.string().nullable().default(null),
-  storePreference: z.enum(['kroger', 'wholefoods']).nullable().default(null),
   gramsPerMl: z.number().positive().nullable().default(null),
   unitWeights: z.partialRecord(z.enum(COUNT_UNITS), z.number().positive()).default({}),
 });
@@ -61,7 +60,6 @@ const newEntry = (name: string): IngredientEntry => ({
   food: null,
   fdcQuery: null,
   storeSearch: null,
-  storePreference: null,
   gramsPerMl: null,
   unitWeights: {},
 });
@@ -92,12 +90,6 @@ export const withStoreSearch = (entries: IngredientEntry[], name: string, term: 
   ...entryFor(entries, name),
   storeSearch: term.trim(),
 });
-
-export const withStorePreference = (
-  entries: IngredientEntry[],
-  name: string,
-  store: IngredientEntry['storePreference'],
-): IngredientEntry => ({ ...entryFor(entries, name), storePreference: store });
 
 export const withUnitWeight = (entries: IngredientEntry[], name: string, unit: Unit, grams: number): IngredientEntry => {
   const entry = entryFor(entries, name);
@@ -189,7 +181,6 @@ export const describeIngredients = (index: { ingredient: string; lines: string[]
       ...(entry?.food && { food: entry.food.description ?? 'no FDC food' }),
       ...(entry?.fdcQuery && { searchAs: entry.fdcQuery }),
       ...(entry?.storeSearch && { storeSearchAs: entry.storeSearch }),
-      ...(entry?.storePreference && { storePreference: entry.storePreference }),
       ...(weights.length > 0 && { weights }),
       lines: linesOf.get(ingredient) ?? [],
     };

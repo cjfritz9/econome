@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { checkVegan, concernKey, concernsToCount, ingredientsHash, type LabelFacts } from '../../src/core/vegan.ts';
+import { checkVegan, concernKey, concernsToCount, ingredientsHash, nameConcerns, type LabelFacts } from '../../src/core/vegan.ts';
 
 const label = (overrides: Partial<LabelFacts> = {}): LabelFacts => ({
   ingredients: 'Water, Organic Soybeans, Calcium Sulfate.',
@@ -45,6 +45,7 @@ describe('checkVegan', () => {
     ['cream of tartar', 'Cream of Tartar, Baking Soda'],
     ['organic cane sugar', 'Organic Cane Sugar, Cocoa'],
     ['soy lecithin', 'Chocolate, Soy Lecithin'],
+    ['butter beans', 'Butter Beans, Water, Salt'],
   ])('passes %s', (_name, ingredients) => {
     expect(checkVegan(label({ ingredients })).verdict).toBe('vegan');
   });
@@ -68,6 +69,14 @@ describe('checkVegan', () => {
       reasons: ['natural flavors: OK by your past reviews'],
       source: 'your past reviews',
     });
+  });
+
+  it('never decides a meat named in the ingredients from past answers, so real meat is always asked about', () => {
+    const tallies = new Map([['names a meat', { ok: 5, notOk: 0 }]]);
+    const check = checkVegan(label({ ingredients: 'Prepared Lima Beans, Water, Cured Pork (Pork Fatback), Salt' }), tallies);
+
+    expect(check.verdict).toBe('needs-review');
+    expect(concernsToCount(check)).toEqual([]);
   });
 
   it('keeps a concern in review while answers disagree, and refuses one answered no three times', () => {
@@ -106,5 +115,19 @@ describe('concernsToCount', () => {
 
   it('never counts a missing ingredient list, so products without one are always asked about', () => {
     expect(concernsToCount(checkVegan(label({ ingredients: null })))).toEqual([]);
+  });
+});
+
+describe('nameConcerns', () => {
+  it('flags a product name that mentions an animal ingredient', () => {
+    expect(nameConcerns("Luck's Giant Lima Beans Seasoned with Pork")).toEqual(['the name says "pork": check it\'s plant-based']);
+    expect(nameConcerns('Honey Wheat Bread')).toEqual(['the name says "honey": check it\'s plant-based']);
+  });
+
+  it('lets names that say they are plant-based, and foods that only sound animal, through', () => {
+    expect(nameConcerns("Morning Star Farms Plant Based Crispy Chik'n Nuggets")).toEqual([]);
+    expect(nameConcerns('Violife Just Like Mozzarella Shreds Cheese Alternative, Dairy-Free Vegan')).toEqual([]);
+    expect(nameConcerns('Bush\'s Large Butter Beans')).toEqual([]);
+    expect(nameConcerns('Fresh Large Red Beefsteak Tomato')).toEqual([]);
   });
 });

@@ -27,22 +27,24 @@ export const SettingsSchema = z.object({
     .positive()
     .optional()
     .describe(`Daily spending cap for Économe's own Claude calls, in US dollars (default ${DEFAULT_DAILY_CLAUDE_CAP_USD})`),
-  weeklyCapUsd: z.number().positive().optional().describe('Weekly grocery budget the review compares against, in US dollars'),
+  weeklyCapUsd: z
+    .number()
+    .positive()
+    .optional()
+    .describe(
+      'Weekly grocery budget in US dollars, a warning only: when a week looks to run over it, say so, but never block, change or drop anything because of it',
+    ),
   mealTargets: MealTargets.optional().describe(
     "Servings to plan in a usual week for each meal, one serving being one person's meal. Any week can set its own with plan_week",
   ),
-  kroger: z
+  instacart: z
     .object({
-      locationId: z
+      retailer: z
         .string()
-        .regex(/^[0-9A-Za-z]{8}$/, 'A Kroger store id has 8 characters')
+        .min(1)
         .optional()
-        .describe('The Kroger store the household shops, from find_kroger_stores'),
-      modality: z.enum(['PICKUP', 'DELIVERY']).optional().describe("How the Kroger cart's items are fulfilled; Kroger's default is PICKUP"),
+        .describe("The store the household shops on Instacart, by the name Instacart's connector uses, such as Wegmans"),
     })
-    .optional(),
-  wholeFoods: z
-    .object({ storeId: z.number().int().positive().optional().describe('The Whole Foods store the household uses, such as 10257') })
     .optional(),
   planningDirective: NotePath.refine((path) => path.startsWith('directives/'), 'A planning directive is a note under directives/')
     .optional()

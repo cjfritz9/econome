@@ -91,16 +91,11 @@ import type { Claude, SpendLedger } from '../llm/claude.ts';
 import { LineParseSchema, UNITS } from '../llm/parse-ingredients.ts';
 import type { FoodData } from '../sources/fdc.ts';
 import { recipeLink, type HungryrootCatalog } from '../sources/hungryroot.ts';
-import type { Kroger } from '../sources/kroger.ts';
-import type { KrogerSession } from '../core/kroger-session.ts';
 import type { ProductMemory, VeganLine } from '../data/product-memory.ts';
-import type { StoreAccounts } from '../data/store-accounts.ts';
-import type { KrogerAccount } from '../sources/kroger-account.ts';
-import type { WholeFoods } from '../sources/whole-foods.ts';
 import { registerStoreTools } from './store-tools.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
-export const SERVER_VERSION = '0.26.0';
+export const SERVER_VERSION = '0.29.0';
 
 export interface ServerDeps {
   access: Access;
@@ -114,13 +109,8 @@ export interface ServerDeps {
   fdc: FoodData;
   hungryroot: HungryrootCatalog;
   hungryrootRecipes: HungryrootRecipes;
-  kroger: Kroger | null;
   productMemory: ProductMemory;
   veganLine: VeganLine;
-  storeAccounts: StoreAccounts;
-  krogerSession: KrogerSession | null;
-  krogerAccount: KrogerAccount | null;
-  wholeFoods: WholeFoods;
   decisions: Decisions;
   claude: Claude;
   actingUid: string;
@@ -144,6 +134,8 @@ A recipe's ingredient list is the source of truth, and Économe never reads its 
 Read the notes with read_notes before planning a week or settling an ingredient question. Propose a week's meals to the household and wait for its yes before saving them with plan_week, building the list or touching any cart; meals are the household's call. Read the week with get_week before planning it: its coverage counts servings, one person's meal each, against the household's meal targets, with the Hungryroot box's recipes first and dinner leftovers as lunches, and leftToPlan says what's still to fill. Planning and recipe suggestions follow the household's planning directive, the note get_household names as settings.planningDirective. It's always in effect; the household changes it by editing that note with write_note, or swaps it by pointing planningDirective at another note under directives/ with update_settings. Suggested swaps must make sense in the dish, and are only suggestions until someone says yes.
 
 The Hungryroot box is planned too: suggest_hungryroot_box finds candidates for the box still open before its cutoff, you choose by the directive and the household confirms or picks others, set_hungryroot_box saves what it confirmed with any swaps, and before the cutoff you show the box from get_week as a checklist for the household to compare with its cart in the Hungryroot app, then lock_hungryroot_box once it says the selections are locked in. Économe never touches the Hungryroot account itself.
+
+Everything else is bought at the household's Instacart store (settings.instacart.retailer) through the Instacart connector, which belongs to the household's Claude account; Économe only decides and remembers. match_instacart gives each item's chosen product, or a search term. Search with the connector's search_products, never its quick-add (it adds the first result, which has meant pork-seasoned beans for "butter beans"), propose products that follow the household's brand notes and pass check_vegan, and record the household's picks with choose_product. On the household's yes, approve_instacart returns the exact item_updates for the connector's cart tool; after adding them, read the cart back into record_instacart_cart and report any difference. Instacart's prices are shown to the household but not to you, so the household compares totals itself.
 
 Nutrition is an estimate: each ingredient is matched once to a USDA FoodData Central food with match_foods. A wrong match is fixed with search_foods and set_food, a name FoodData Central spells differently (lemongrass as "lemon grass") with set_food_search, and a wrong weight (one cup, one piece, one can) with set_unit_weight.`;
 
@@ -189,13 +181,8 @@ export const createServer = ({
   fdc,
   hungryroot,
   hungryrootRecipes,
-  kroger,
   productMemory,
   veganLine,
-  storeAccounts,
-  krogerSession,
-  krogerAccount,
-  wholeFoods,
   decisions,
   claude,
   actingUid
@@ -231,13 +218,12 @@ export const createServer = ({
     async () => {
       const household = await member();
       const settings = withDefaults(household.settings);
-      const [members, spentToday, krogerConnection] = await Promise.all([
+      const [members, spentToday] = await Promise.all([
         households.findMemberProfiles(household.members),
         spend.spentOn(
           household.id,
           householdToday(settings.timezone, new Date())
-        ),
-        storeAccounts.find(household.id)
+        )
       ]);
       return jsonResult({
         id: household.id,
@@ -247,16 +233,7 @@ export const createServer = ({
         claudeSpendToday: {
           usd: Number(spentToday.toFixed(4)),
           cap: settings.dailyClaudeCapUsd
-        },
-        krogerAccount: krogerConnection
-          ? {
-              connected: true,
-              connectedBy:
-                members.find(({ uid }) => uid === krogerConnection.connectedBy)
-                  ?.name ?? 'a former member',
-              since: krogerConnection.connectedAt
-            }
-          : { connected: false }
+        }
       });
     }
   );
@@ -1358,7 +1335,7 @@ export const createServer = ({
   server.registerTool(
     'write_note',
     {
-      description: `Create or replace a household note. It replaces the whole note, so read it first and send the full text. Notes in ${INGREDIENT_NOTES}.md or under ${INGREDIENT_NOTES}/ are rules for turning recipe lines into groceries, and the parser follows them for new lines. Other topics get their own path, such as planning.md or stores/kroger.md. Saved as a decision.`,
+      description: `Create or replace a household note. It replaces the whole note, so read it first and send the full text. Notes in ${INGREDIENT_NOTES}.md or under ${INGREDIENT_NOTES}/ are rules for turning recipe lines into groceries, and the parser follows them for new lines. Other topics get their own path, such as planning.md or stores/wegmans.md. Saved as a decision.`,
       inputSchema: z.object({ path: NotePath, content: NoteContent })
     },
     async ({ path, content }) => {
@@ -1405,7 +1382,7 @@ export const createServer = ({
 
   registerStoreTools(server, {
     member,
-    kroger,
+    fdc,
     productMemory,
     veganLine,
     ingredients,
@@ -1417,10 +1394,7 @@ export const createServer = ({
       });
       return { week: week.id, buy: result.buy };
     },
-    weeks,
-    session: krogerSession,
-    account: krogerAccount,
-    wholeFoods
+    weeks
   });
 
   return server;

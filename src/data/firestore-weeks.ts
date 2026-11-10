@@ -30,8 +30,8 @@ export const firestoreWeeks = (db: Firestore): Weeks => {
         .set({ hungryroot, boxLocked: false, boxConfirmedBy: confirmedBy, boxConfirmedAt: Timestamp.now() }, { merge: true });
     },
 
-    saveKroger: async (householdId, weekId, section) => {
-      await weeks(householdId).doc(weekId).set({ kroger: section }, { mergeFields: ['kroger'] });
+    saveInstacart: async (householdId, weekId, section) => {
+      await weeks(householdId).doc(weekId).set({ instacart: section }, { mergeFields: ['instacart'] });
     },
 
     lockBox: async (householdId, weekId, lockedBy) => {

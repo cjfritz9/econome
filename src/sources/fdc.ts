@@ -26,12 +26,35 @@ export interface FdcFood {
   portions: string[];
 }
 
+export interface BrandedFood {
+  fdcId: number;
+  description: string;
+  brand: string | null;
+  owner: string | null;
+  ingredients: string | null;
+}
+
 export interface FoodData {
   candidates: (query: string) => Promise<FdcFood[]>;
   food: (fdcId: number) => Promise<FdcFood | null>;
+  branded: (query: string) => Promise<BrandedFood[]>;
 }
 
+const LABEL_RESULTS = 10;
+
 const SearchSchema = z.object({ foods: z.array(z.object({ fdcId: z.number() })) });
+
+const BrandedSearchSchema = z.object({
+  foods: z.array(
+    z.object({
+      fdcId: z.number(),
+      description: z.string(),
+      brandName: z.string().nullish(),
+      brandOwner: z.string().nullish(),
+      ingredients: z.string().nullish(),
+    }),
+  ),
+});
 
 const PortionSchema = z.object({
   amount: z.number().nullish(),
@@ -131,5 +154,15 @@ export const fdcClient = (apiKey: string, fetchJson: typeof fetch = fetch): Food
       return ids.flatMap((id) => byId.get(id) ?? []);
     },
     food: async (fdcId) => (await details([fdcId]))[0] ?? null,
+    branded: async (query) =>
+      BrandedSearchSchema.parse(await post('/foods/search', { query: searchTerm(query), dataType: ['Branded'], pageSize: LABEL_RESULTS })).foods.map(
+        ({ fdcId, description, brandName, brandOwner, ingredients }) => ({
+          fdcId,
+          description,
+          brand: brandName ?? null,
+          owner: brandOwner ?? null,
+          ingredients: ingredients ?? null,
+        }),
+      ),
   };
 };

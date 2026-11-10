@@ -3,11 +3,11 @@ import { asRules, NotePath, notesAbout } from '../../src/data/notes.ts';
 import { note } from '../fakes.ts';
 
 describe('NotePath', () => {
-  it.each(['ingredients.md', 'stores/kroger.md', 'ingredients/oils-and-fats.md'])('accepts %s', (path) => {
+  it.each(['ingredients.md', 'stores/wegmans.md', 'ingredients/oils-and-fats.md'])('accepts %s', (path) => {
     expect(NotePath.safeParse(path).success).toBe(true);
   });
 
-  it.each(['Ingredients.md', 'ingredients', '/ingredients.md', 'stores//kroger.md', 'notes/../secrets.md', 'my notes.md'])(
+  it.each(['Ingredients.md', 'ingredients', '/ingredients.md', 'stores//wegmans.md', 'notes/../secrets.md', 'my notes.md'])(
     'refuses %s',
     (path) => {
       expect(NotePath.safeParse(path).success).toBe(false);

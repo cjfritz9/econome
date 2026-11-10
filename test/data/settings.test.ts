@@ -24,7 +24,7 @@ describe('SettingsSchema', () => {
       },
       planningDirective: 'directives/cutting.md',
       mealTargets: { breakfast: 0, lunch: 8, dinner: 12 },
-      kroger: { locationId: '01400513' },
+      instacart: { retailer: 'Wegmans' },
     };
 
     expect(SettingsSchema.parse(settings)).toEqual(settings);
@@ -40,7 +40,7 @@ describe('SettingsSchema', () => {
     ['a negative meal target', { mealTargets: { dinner: -2 } }],
     ['a fractional meal target', { mealTargets: { lunch: 2.5 } }],
     ['a box of part servings', { hungryroot: { boxServings: 12.5 } }],
-    ['a Kroger store id of the wrong length', { kroger: { locationId: '123' } }],
+    ['an empty Instacart store name', { instacart: { retailer: '' } }],
   ])('rejects %s', (_label, settings) => {
     expect(SettingsSchema.safeParse(settings).success).toBe(false);
   });

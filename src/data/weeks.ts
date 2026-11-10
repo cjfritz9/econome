@@ -36,19 +36,26 @@ const HungryrootMealSchema = z.object({
 
 const orEmpty = <T>(items: T[] | null | undefined) => items ?? [];
 
-const CartLineSchema = z.object({ ingredient: z.string(), upc: z.string(), quantity: z.number().int().positive() });
-
-export const KrogerSectionSchema = z.object({
-  approved: z.object({ lines: z.array(CartLineSchema), listHash: z.string(), by: z.string() }).nullable().default(null),
-  journal: z
-    .record(z.string(), z.object({ quantity: z.number(), status: z.enum(['sent', 'unknown', 'failed']), message: z.string().nullable() }))
-    .default({}),
-  checkedOut: z.object({ by: z.string(), lines: z.array(CartLineSchema) }).nullable().default(null),
+const CartLineSchema = z.object({
+  ingredient: z.string(),
+  productId: z.string(),
+  quantity: z.number().int().positive(),
+  name: z.string().nullable().default(null),
 });
 
-export type KrogerSection = z.infer<typeof KrogerSectionSchema>;
+const InCartSchema = z.object({ productId: z.string(), quantity: z.number().positive(), name: z.string().nullable().default(null) });
+
+export const InstacartSectionSchema = z.object({
+  retailer: z.string().nullable().default(null),
+  approved: z.object({ lines: z.array(CartLineSchema), listHash: z.string(), by: z.string() }).nullable().default(null),
+  filled: z.object({ by: z.string(), lines: z.array(InCartSchema) }).nullable().default(null),
+  checkedOut: z.object({ by: z.string() }).nullable().default(null),
+});
+
+export type InstacartSection = z.infer<typeof InstacartSectionSchema>;
 export type CartLine = z.infer<typeof CartLineSchema>;
-export const emptyKrogerSection = (): KrogerSection => ({ approved: null, journal: {}, checkedOut: null });
+export type InCart = z.infer<typeof InCartSchema>;
+export const emptyInstacartSection = (): InstacartSection => ({ retailer: null, approved: null, filled: null, checkedOut: null });
 
 const WeekDocSchema = z.object({
   meals: z.array(PlannedMealSchema).nullish().transform(orEmpty),
@@ -59,7 +66,7 @@ const WeekDocSchema = z.object({
     .nullish()
     .transform((have) => have ?? {}),
   boxLocked: z.boolean().nullish().transform((locked) => locked ?? false),
-  kroger: KrogerSectionSchema.nullish().transform((section) => section ?? emptyKrogerSection()),
+  instacart: InstacartSectionSchema.nullish().transform((section) => section ?? emptyInstacartSection()),
 });
 
 export type PlannedMeal = z.infer<typeof PlannedMealSchema>;
@@ -88,7 +95,7 @@ export interface Weeks {
   saveHave: (householdId: string, weekId: string, have: Record<string, boolean>) => Promise<void>;
   saveHungryroot: (householdId: string, weekId: string, hungryroot: HungryrootMeal[], confirmedBy: string) => Promise<void>;
   lockBox: (householdId: string, weekId: string, lockedBy: string) => Promise<void>;
-  saveKroger: (householdId: string, weekId: string, section: KrogerSection) => Promise<void>;
+  saveInstacart: (householdId: string, weekId: string, section: InstacartSection) => Promise<void>;
 }
 
 export interface PlannedWeek {
@@ -98,10 +105,10 @@ export interface PlannedWeek {
   targets: MealTargets;
   have: Record<string, boolean>;
   boxLocked: boolean;
-  kroger: KrogerSection;
+  instacart: InstacartSection;
 }
 
-export const emptyWeek = () => ({ meals: [], hungryroot: [], targets: {}, have: {}, boxLocked: false, kroger: emptyKrogerSection() });
+export const emptyWeek = () => ({ meals: [], hungryroot: [], targets: {}, have: {}, boxLocked: false, instacart: emptyInstacartSection() });
 
 export const loadWeeks = async (weeks: Weeks, householdId: string, wanted: CalendarWeek[]): Promise<PlannedWeek[]> => {
   const docs = await weeks.findWeekDocs(

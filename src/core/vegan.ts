@@ -37,7 +37,7 @@ const DENY: [RegExp, string][] = [
   [/\bcasein(ate)?\b/i, 'casein'],
   [/\blactose\b/i, 'lactose'],
   [new RegExp(`(?<!${PLANT}[\\s-]?)\\bmilk\\b(?!\\s+(thistle|chocolate))`, 'i'), 'milk'],
-  [new RegExp(`(?<!${PLANT}[\\s-]?)\\bbutter\\b`, 'i'), 'butter'],
+  [new RegExp(`(?<!${PLANT}[\\s-]?)\\bbutter\\b(?!\\s+beans?)`, 'i'), 'butter'],
   [new RegExp(`(?<!${PLANT}[\\s-]?)\\bcream\\b(?!\\s+of\\s+tartar)`, 'i'), 'cream'],
   [new RegExp(`(?<!${PLANT}[\\s-]?)\\bcheese\\b`, 'i'), 'cheese'],
   [/\beggs?\b|\begg (whites?|yolks?)\b/i, 'egg'],
@@ -64,7 +64,18 @@ const QUESTIONABLE: [RegExp, string][] = [
   [/\b(chicken|beef|pork|turkey|bacon|meat)\b/i, "names a meat: check it's plant-based"],
 ];
 
+const NEVER_LEARNED = new Set(['names a meat']);
+
+const VEGAN_CUE = /\b(vegan|plant[- ]based|plants?|dairy[- ]free|non[- ]dairy|meatless|meat[- ]free|chik'?n|alternative)\b/i;
+const ANIMAL_IN_NAME = /\b(pork|beef|chicken|turkey|bacon|ham|sausage|meat|tuna|salmon|shrimp|crab)\b/i;
+
 export const concernKey = (reason: string) => reason.split(':')[0]?.trim().toLowerCase() ?? reason;
+
+export const nameConcerns = (name: string) => {
+  if (VEGAN_CUE.test(name)) return [];
+  const words = [ANIMAL_IN_NAME, ...DENY.map(([pattern]) => pattern)].flatMap((pattern) => pattern.exec(name)?.[0] ?? []);
+  return [...new Set(words.map((word) => word.toLowerCase()))].map((word) => `the name says "${word}": check it's plant-based`);
+};
 
 export const ingredientsHash = (ingredients: string | null) =>
   createHash('sha256').update((ingredients ?? '').toLowerCase().replace(/\s+/g, ' ').trim()).digest('hex').slice(0, 16);
@@ -102,6 +113,7 @@ export const checkVegan = (
   if (concerns.length === 0) return { verdict: 'vegan', reasons: ['no animal ingredients in its list'], source: 'ingredients' };
 
   const decided = (reason: string) => {
+    if (NEVER_LEARNED.has(concernKey(reason))) return null;
     const tally = tallies.get(concernKey(reason));
     if (!tally) return null;
     if (tally.ok >= AUTO_DECIDE_AFTER && tally.notOk === 0) return 'ok';
@@ -116,4 +128,4 @@ export const checkVegan = (
 };
 
 export const concernsToCount = ({ verdict, source, reasons }: VeganCheck) =>
-  verdict === 'needs-review' && source === 'ingredients' ? reasons.map(concernKey) : [];
+  verdict === 'needs-review' && source === 'ingredients' ? reasons.map(concernKey).filter((concern) => !NEVER_LEARNED.has(concern)) : [];

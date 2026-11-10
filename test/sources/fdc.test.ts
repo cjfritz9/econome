@@ -75,6 +75,27 @@ describe('fdcClient', () => {
     expect(requests.filter(({ url }) => url.includes('/foods/search')).map(({ body }) => (body as { query?: string }).query)).toEqual(['tofu', 'tofu']);
   });
 
+  it('searches branded foods for their brand and ingredient list, straight from the search results', async () => {
+    const bodies: { query?: string; dataType?: string[] }[] = [];
+    const fetchJson: typeof fetch = async (_input, init) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return respond({
+        foods: [
+          { fdcId: 1, description: 'JUST LIKE MOZZARELLA SHREDS', brandName: 'Violife', brandOwner: 'Upfield', ingredients: 'Filtered Water, Coconut Oil' },
+          { fdcId: 2, description: 'EXTRA FIRM TOFU' },
+        ],
+      });
+    };
+
+    const foods = await fdcClient('key', fetchJson).branded('Violife Mozzarella Shreds');
+
+    expect(bodies).toEqual([{ query: 'Violife Mozzarella Shreds', dataType: ['Branded'], pageSize: 10 }]);
+    expect(foods).toEqual([
+      { fdcId: 1, description: 'JUST LIKE MOZZARELLA SHREDS', brand: 'Violife', owner: 'Upfield', ingredients: 'Filtered Water, Coconut Oil' },
+      { fdcId: 2, description: 'EXTRA FIRM TOFU', brand: null, owner: null, ingredients: null },
+    ]);
+  });
+
   it('says when the hourly limit is used up', async () => {
     const fetchJson: typeof fetch = async () => respond({}, 429);
 

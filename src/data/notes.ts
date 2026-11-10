@@ -4,7 +4,7 @@ export const NotePath = z
   .string()
   .regex(
     /^[a-z0-9][a-z0-9-]*(\/[a-z0-9][a-z0-9-]*)*\.md$/,
-    'A note path is lowercase words joined by hyphens, optionally in folders, ending in .md, such as "ingredients.md" or "stores/kroger.md"',
+    'A note path is lowercase words joined by hyphens, optionally in folders, ending in .md, such as "ingredients.md" or "stores/wegmans.md"',
   );
 
 export const NoteContent = z.string().min(1).max(10_000);

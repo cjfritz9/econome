@@ -6,7 +6,7 @@ import type { ParsedLine, ParsedLines } from '../src/data/parsed-lines.ts';
 import type { Ingredient, Recipe } from '../src/data/recipes.ts';
 import type { Claude } from '../src/llm/claude.ts';
 import type { LineParse } from '../src/llm/parse-ingredients.ts';
-import type { FdcFood, FoodData } from '../src/sources/fdc.ts';
+import type { BrandedFood, FdcFood, FoodData } from '../src/sources/fdc.ts';
 
 export const household: Household = { id: 'h1', name: 'Home', members: ['uid1'], settings: {} };
 
@@ -79,7 +79,6 @@ export const entry = (name: string, overrides: Partial<IngredientEntry> = {}): I
   food: null,
   fdcQuery: null,
   storeSearch: null,
-  storePreference: null,
   gramsPerMl: null,
   unitWeights: {},
   ...overrides,
@@ -124,7 +123,7 @@ export const fdcFood = (fdcId: number, description: string, overrides: Partial<F
   ...overrides,
 });
 
-export const fakeFoodData = (byQuery: Record<string, FdcFood[]>) => {
+export const fakeFoodData = (byQuery: Record<string, FdcFood[]>, brandedByQuery: Record<string, BrandedFood[]> = {}) => {
   const queries: string[] = [];
   const foodData: FoodData = {
     candidates: async (query) => {
@@ -132,6 +131,10 @@ export const fakeFoodData = (byQuery: Record<string, FdcFood[]>) => {
       return byQuery[query] ?? [];
     },
     food: async (fdcId) => Object.values(byQuery).flat().find((food) => food.fdcId === fdcId) ?? null,
+    branded: async (query) => {
+      queries.push(query);
+      return brandedByQuery[query] ?? [];
+    },
   };
   return { foodData, queries };
 };
