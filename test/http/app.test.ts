@@ -254,7 +254,20 @@ describe("receiving a fill's result", () => {
         { productId: '111', quantity: 2, name: 'Organic Extra Firm Tofu' },
         { productId: '333', quantity: 1, name: 'Cucumber' },
       ],
+      checkoutUrl: null,
     });
+  });
+
+  it("keeps the cart's checkout link, without Instacart's tracking, and ignores any other address", async () => {
+    const withLink = (checkout_url: string) => ({ ...cart([{ product_id: '111', quantity: 2 }]), carts: [{ retailer: 'Wegmans', checkout_url, lines: [{ product_id: '111', quantity: 2 }] }] });
+    const first = setup({ sections: { 'h1/2026-W46': sentWeek(FILL_ID) } });
+
+    await first.app.request('/routines/instacart-fill/result', fromRoutine(withLink('https://www.instacart.com/store/checkout_v4?sid=1234&cartId=987&utm_source=fig_mcp_generic&utm_campaign=x')));
+    expect(first.saved.get('h1/2026-W46')?.filled?.checkoutUrl).toBe('https://www.instacart.com/store/checkout_v4?sid=1234&cartId=987');
+
+    const second = setup({ sections: { 'h1/2026-W46': sentWeek(FILL_ID) } });
+    await second.app.request('/routines/instacart-fill/result', fromRoutine(withLink('https://instacart.example.com/checkout?sid=1234')));
+    expect(second.saved.get('h1/2026-W46')?.filled?.checkoutUrl).toBeNull();
   });
 
   it('accepts each result once', async () => {

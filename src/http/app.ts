@@ -5,7 +5,7 @@ import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
 import * as z from 'zod';
 import { chooseWeek } from '../core/calendar.ts';
-import { fillRequest, fillTarget, newFillId } from '../core/instacart-fill.ts';
+import { checkoutLink, fillRequest, fillTarget, newFillId } from '../core/instacart-fill.ts';
 import { compareCart } from '../core/instacart-match.ts';
 import { AccessError, ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
 import { describeHousehold, requireHousehold, type DailySpend, type Households } from '../data/household.ts';
@@ -43,6 +43,7 @@ const FillResultSchema = z.object({
     .array(
       z.object({
         retailer: z.string(),
+        checkout_url: z.string().nullish(),
         lines: z.array(z.object({ product_id: z.string().regex(/^\d+$/), name: z.string().nullish(), quantity: z.number().positive() })),
       }),
     )
@@ -165,7 +166,8 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     const cart = result.carts.find((reported) => retailer && sameStore(reported.retailer, retailer)) ?? (result.carts.length === 1 ? result.carts[0] : undefined);
     if (!cart) throw new HTTPException(400, { message: `The result has no cart for ${retailer ?? "the week's store"}.` });
     const lines = cart.lines.map(({ product_id, name, quantity }) => ({ productId: product_id, quantity, name: name ?? null }));
-    await weeks.saveInstacart(target.householdId, target.week.id, { ...section, filled: { by: sent.by, lines, fillId: result.fill_id } });
+    const filled = { by: sent.by, lines, fillId: result.fill_id, checkoutUrl: checkoutLink(cart.checkout_url) };
+    await weeks.saveInstacart(target.householdId, target.week.id, { ...section, filled });
     return c.json({ week: target.week.id, ...compareCart(section.approved.lines, lines) });
   });
 

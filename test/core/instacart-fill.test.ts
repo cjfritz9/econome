@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { weekOf } from '../../src/core/calendar.ts';
-import { fillRequest, fillTarget, newFillId } from '../../src/core/instacart-fill.ts';
+import { checkoutLink, fillRequest, fillTarget, newFillId, storeCheckoutLink } from '../../src/core/instacart-fill.ts';
 
 describe('fill IDs', () => {
   it('lead back to the household and week they were made for, and differ every time', () => {
@@ -30,5 +30,24 @@ describe('fillRequest', () => {
       fill_id: 'fill-1',
       carts: [{ retailer: 'Wegmans', items: [{ product_id: '111', quantity: 3 }, { product_id: '222', quantity: 1 }] }],
     });
+  });
+});
+
+describe('checkoutLink', () => {
+  it("keeps Instacart's checkout link for the cart, without its tracking parameters", () => {
+    expect(checkoutLink('https://www.instacart.com/store/checkout_v4?sid=1234&cartId=987&utm_source=fig&utm_campaign=x')).toBe(
+      'https://www.instacart.com/store/checkout_v4?sid=1234&cartId=987',
+    );
+  });
+
+  it.each([undefined, null, '', 'not a link', 'http://www.instacart.com/store/checkout_v4?sid=1234', 'https://evil.example.com/store/checkout_v4?sid=1234'])(
+    'refuses %s',
+    (reported) => {
+      expect(checkoutLink(reported)).toBeNull();
+    },
+  );
+
+  it("builds a store's checkout link from its id when there's no cart link yet", () => {
+    expect(storeCheckoutLink('1234')).toBe('https://www.instacart.com/store/checkout_v4?sid=1234');
   });
 });

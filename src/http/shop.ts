@@ -200,7 +200,7 @@ export const shopRoutes = (deps: ShopDeps) => {
   const cartFor = async (c: Context<Env>, date: string) => {
     const planned = await plannedWeek(c.var.household, date);
     const settled = ['approved', 'filled', 'differences'].includes(shopState(planned));
-    return cartView(planned, settled ? (await productsFor(c, date)).listHash : null);
+    return cartView(planned, settled ? (await productsFor(c, date)).listHash : null, c.var.household.settings.instacart?.storeId ?? null);
   };
 
   routes.get('/weeks/:date/instacart', async (c) => c.json(await cartFor(c, dateParam(c))));

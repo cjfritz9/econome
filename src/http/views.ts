@@ -1,4 +1,5 @@
 import type { CalendarWeek } from '../core/calendar.ts';
+import { storeCheckoutLink } from '../core/instacart-fill.ts';
 import { compareCart, listHash, type MatchedItem } from '../core/instacart-match.ts';
 import type { ListItem } from '../core/shopping-list.ts';
 import type { Household } from '../data/household.ts';
@@ -164,7 +165,7 @@ export const productsView = (
   };
 };
 
-export const cartView = (planned: Pick<PlannedWeek, 'week' | 'meals' | 'instacart'>, currentListHash: string | null) => {
+export const cartView = (planned: Pick<PlannedWeek, 'week' | 'meals' | 'instacart'>, currentListHash: string | null, storeId: string | null) => {
   const { approved, sent, filled, checkedOut }: InstacartSection = planned.instacart;
   const fillState = !sent ? null : sent.error ? 'failed' : filled?.fillId === sent.fillId ? 'done' : 'running';
   return {
@@ -175,5 +176,6 @@ export const cartView = (planned: Pick<PlannedWeek, 'week' | 'meals' | 'instacar
     comparison: approved && filled ? compareCart(approved.lines, filled.lines) : null,
     listChanged: Boolean(approved && currentListHash && currentListHash !== approved.listHash),
     checkedOut: Boolean(checkedOut),
+    checkoutUrl: filled?.checkoutUrl ?? (storeId ? storeCheckoutLink(storeId) : null),
   };
 };

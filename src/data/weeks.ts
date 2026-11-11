@@ -55,7 +55,10 @@ export const InstacartSectionSchema = z.object({
   retailer: z.string().nullable().default(null),
   approved: z.object({ lines: z.array(CartLineSchema), listHash: z.string(), by: z.string() }).nullable().default(null),
   sent: SentSchema.nullable().default(null),
-  filled: z.object({ by: z.string(), lines: z.array(InCartSchema), fillId: z.string().nullable().default(null) }).nullable().default(null),
+  filled: z
+    .object({ by: z.string(), lines: z.array(InCartSchema), fillId: z.string().nullable().default(null), checkoutUrl: z.string().nullable().default(null) })
+    .nullable()
+    .default(null),
   checkedOut: z.object({ by: z.string() }).nullable().default(null),
 });
 

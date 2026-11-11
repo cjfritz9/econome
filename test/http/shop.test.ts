@@ -299,4 +299,10 @@ describe('the Instacart cart', () => {
     expect(status).toBe(200);
     expect(body).toMatchObject({ state: 'checked-out', checkedOut: true });
   });
+
+  it("links to the store's checkout until a fill reports its own cart's link", async () => {
+    const { call } = setup();
+
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ checkoutUrl: 'https://www.instacart.com/store/checkout_v4?sid=1234' });
+  });
 });

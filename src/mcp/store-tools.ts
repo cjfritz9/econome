@@ -1,6 +1,7 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
 import type { Household } from '../data/household.ts';
+import { checkoutLink } from '../core/instacart-fill.ts';
 import { retailerOf, storeService, type StoreDeps } from '../services/store.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
@@ -138,10 +139,18 @@ export const registerStoreTools = (server: McpServer, { member, actingUid, ...de
         items: z
           .array(z.object({ productId: ProductId, quantity: z.number().positive(), name: z.string().min(1).optional() }))
           .describe('Every item in the cart, with its product_id and quantity as the connector shows them'),
+        checkoutUrl: z.string().optional().describe("The cart's checkout_url as the connector's cart tool shows it, so the household's app links straight to this cart"),
       }),
     },
-    async ({ week: date, items }) =>
-      jsonResult(await store.recordCart(await member(), date, items.map(({ productId, quantity, name }) => ({ productId, quantity, name: name ?? null })))),
+    async ({ week: date, items, checkoutUrl }) =>
+      jsonResult(
+        await store.recordCart(
+          await member(),
+          date,
+          items.map(({ productId, quantity, name }) => ({ productId, quantity, name: name ?? null })),
+          checkoutLink(checkoutUrl),
+        ),
+      ),
   );
 
   server.registerTool(
