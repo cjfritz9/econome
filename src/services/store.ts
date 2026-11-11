@@ -19,9 +19,17 @@ import {
 import type { ParsedLines } from '../data/parsed-lines.ts';
 import { loadWeeks, type InCart, type Weeks } from '../data/weeks.ts';
 import type { FoodData } from '../sources/fdc.ts';
+import { logger } from '../logger.ts';
 import { NotFoundError, RefusedError } from './errors.ts';
 
 const LABEL_PARALLEL = 3;
+
+const UNANSWERED = {
+  verdict: 'needs-review' as const,
+  reasons: ["FoodData Central didn't answer, so its ingredients aren't checked yet"],
+  source: 'no ingredient list' as const,
+  label: null,
+};
 
 export interface StoreDeps {
   fdc: FoodData;
@@ -76,11 +84,14 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
 
   const checkProducts = async (householdId: string, products: { productId: string; name: string }[]) => {
     const [memory, tallies] = await Promise.all([productMemory.list(householdId), veganLine.tallies(householdId)]);
-    return inBatches(products, LABEL_PARALLEL, async ({ productId, name }) => ({
-      productId,
-      name,
-      ...checkProduct(name, await labelFor(name), tallies, reviewOf(memory, productId)),
-    }));
+    return inBatches(products, LABEL_PARALLEL, async ({ productId, name }) => {
+      const label = await labelFor(name).catch((error: unknown) => {
+        logger.warn({ err: error, productId }, 'Could not read an ingredient list from FoodData Central');
+        return undefined;
+      });
+      if (label === undefined) return { productId, name, ...UNANSWERED };
+      return { productId, name, ...checkProduct(name, label, tallies, reviewOf(memory, productId)) };
+    });
   };
 
   const veganDetail = async (household: Household, productId: string) => {

@@ -82,6 +82,21 @@ describe('lookups', () => {
     expect((await harness.report({ job_id: jobId, done: true })).status).toBe(409);
   });
 
+  it("records a batch even when FoodData Central doesn't answer for one product, leaving that one unchecked", async () => {
+    const harness = setup({ branded, failingLabels: ['Sunkist Lemon'] });
+    const jobId = await startLookup(harness);
+
+    const reported = await harness.report({ job_id: jobId, results: [{ id: 'lemon', store: 'Wegmans', term: 'lemon', for: 'lemon', products: lemons }] });
+
+    expect(reported).toEqual({ status: 200, body: { job: jobId, recorded: 1, state: 'done' } });
+    expect(item((await harness.call('GET', `/weeks/${DATE}/products`)).body.items, 'lemon')).toMatchObject({
+      suggestions: [
+        { productId: '501', vegan: { verdict: 'needs-review', reasons: ["FoodData Central didn't answer, so its ingredients aren't checked yet"] } },
+        { productId: '502', vegan: { verdict: 'vegan' } },
+      ],
+    });
+  });
+
   it('keeps an error the routine reports', async () => {
     const harness = setup({ branded });
     const jobId = await startLookup(harness);

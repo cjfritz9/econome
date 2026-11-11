@@ -84,7 +84,8 @@ import {
   planMeals,
   weekCoverage,
   type PlannedWeek,
-  type Weeks
+  type Weeks,
+  RECENT_WEEKS
 } from '../data/weeks.ts';
 import type { Claude, SpendLedger } from '../llm/claude.ts';
 import { LineParseSchema, UNITS } from '../llm/parse-ingredients.ts';
@@ -95,7 +96,7 @@ import { weekList as buildWeekList } from '../services/week-list.ts';
 import { registerStoreTools } from './store-tools.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
-export const SERVER_VERSION = '0.34.0';
+export const SERVER_VERSION = '0.35.0';
 
 export interface ServerDeps {
   access: Access;
@@ -123,7 +124,6 @@ const LineText = z
     'The line exactly as parse_ingredients or list_ingredients shows it, such as "2 piece | green onions, chopped"'
   );
 
-const RECENT_WEEKS = 13;
 
 const INSTRUCTIONS = `Économe plans the household's week from its Mise recipes and turns the recipes into a shopping list. It learns from the household: whenever it judges something on its own, such as how a recipe line was parsed, which ingredient names are the same food, or how an ingredient is bought, the household can correct it with a tool, and the correction is kept and saved as a decision.
 

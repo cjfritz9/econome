@@ -59,7 +59,15 @@ export const setup = ({
   planned = true,
   researchRoutine = RESEARCH_ROUTINE,
   branded = {},
-}: { planned?: boolean; researchRoutine?: RoutineTrigger | null; branded?: Record<string, BrandedFood[]> } = {}) => {
+  moreRecipes = [],
+  failingLabels = [],
+}: {
+  planned?: boolean;
+  researchRoutine?: RoutineTrigger | null;
+  branded?: Record<string, BrandedFood[]>;
+  moreRecipes?: RecipeDoc[];
+  failingLabels?: string[];
+} = {}) => {
   let clock = new Date('2026-11-10T18:00:00.000Z');
   const fired: { trigger: RoutineTrigger; payload: unknown }[] = [];
   const jobs = memoryJobs();
@@ -76,7 +84,7 @@ export const setup = ({
     households,
     spend: { spentOn: async () => 0 },
     weeks: weeks.store,
-    recipes: { listRecipeDocs: async () => recipeDocs },
+    recipes: { listRecipeDocs: async () => [...recipeDocs, ...moreRecipes] },
     parsedLines: memoryParsedLines([
       parsedLine(tofu, parseOf('extra-firm tofu', { amount: 28, unit: 'oz' }), 'claude', ['r1']),
       parsedLine(lemon, parseOf('lemon'), 'claude', ['r1']),
@@ -85,7 +93,7 @@ export const setup = ({
     ingredients: ingredients.store,
     notes: memoryNotes().store,
     claude,
-    fdc: fakeFoodData({}, branded).foodData,
+    fdc: fakeFoodData({}, branded, failingLabels).foodData,
     productMemory: products.store,
     veganLine: memoryVeganLine().store,
     decisions: decisions.store,

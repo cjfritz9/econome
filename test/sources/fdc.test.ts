@@ -101,4 +101,12 @@ describe('fdcClient', () => {
 
     await expect(fdcClient('key', fetchJson).food(1)).rejects.toThrow(/hourly request limit/);
   });
+
+  it('tries once more when FoodData Central has a server error, then gives up', async () => {
+    const answers = [respond({}, 503), respond([{ fdcId: 1, description: 'tofu', dataType: 'SR Legacy' }])];
+    const flaky: typeof fetch = async () => answers.shift() ?? respond({}, 500);
+
+    expect((await fdcClient('key', flaky, 0).food(1))?.description).toBe('tofu');
+    await expect(fdcClient('key', async () => respond({}, 503), 0).food(1)).rejects.toThrow(/answered 503/);
+  });
 });

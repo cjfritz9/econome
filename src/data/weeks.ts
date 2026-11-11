@@ -6,6 +6,8 @@ import type { Recipe } from './recipes.ts';
 
 export const MEAL_SLOTS = ['breakfast', 'lunch', 'dinner'] as const;
 export const MealSlot = z.enum(MEAL_SLOTS);
+
+export const RECENT_WEEKS = 13;
 export type MealSlot = z.infer<typeof MealSlot>;
 
 const Servings = z.number().int().nonnegative();

@@ -128,7 +128,7 @@ export const fdcFood = (fdcId: number, description: string, overrides: Partial<F
   ...overrides,
 });
 
-export const fakeFoodData = (byQuery: Record<string, FdcFood[]>, brandedByQuery: Record<string, BrandedFood[]> = {}) => {
+export const fakeFoodData = (byQuery: Record<string, FdcFood[]>, brandedByQuery: Record<string, BrandedFood[]> = {}, failing: string[] = []) => {
   const queries: string[] = [];
   const foodData: FoodData = {
     candidates: async (query) => {
@@ -138,6 +138,7 @@ export const fakeFoodData = (byQuery: Record<string, FdcFood[]>, brandedByQuery:
     food: async (fdcId) => Object.values(byQuery).flat().find((food) => food.fdcId === fdcId) ?? null,
     branded: async (query) => {
       queries.push(query);
+      if (failing.includes(query)) throw new Error('FoodData Central answered 503.');
       return brandedByQuery[query] ?? [];
     },
   };

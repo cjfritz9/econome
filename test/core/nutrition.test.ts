@@ -85,6 +85,22 @@ describe('recipeNutrition', () => {
   });
 
   it('has no estimate when no line could be counted', () => {
-    expect(recipeNutrition(recipeWith('naan', [naan]), lines, entries).perServing).toBeNull();
+    expect(recipeNutrition(recipeWith('naan', [naan]), lines, entries)).toMatchObject({ perServing: null, estimate: 'none' });
+  });
+
+  it('calls an estimate complete when only to-taste lines or a tablespoon or less without a weight are left out', () => {
+    const pepper: Ingredient = { amount: 1, unit: 'tsp', name: 'black pepper' };
+    const paste: Ingredient = { amount: 2, unit: 'tbsp', name: 'curry paste' };
+    const withSpices = new Map([
+      ...lines,
+      ...[parsedLine(pepper, parseOf('black pepper', { unit: 'tsp' })), parsedLine(paste, parseOf('curry paste', { amount: 2, unit: 'tbsp' }))].map((parsed) => [parsed.key, parsed] as const),
+    ]);
+    const withFoods = new Map([...entries, ...[entry('black pepper', { food: food(250, 10) }), entry('curry paste', { food: food(100, 2) })].map((saved) => [saved.name, saved] as const)]);
+
+    const seasoned = recipeNutrition(recipeWith('seasoned', [tofu, salt, pepper]), withSpices, withFoods);
+    expect(seasoned.estimate).toBe('complete');
+    expect(seasoned.gaps).toContain('1 tsp | black pepper (no weight for tsp)');
+    expect(recipeNutrition(recipeWith('curried', [tofu, paste]), withSpices, withFoods).estimate).toBe('partial');
+    expect(recipeNutrition(recipeWith('with naan', [tofu, naan]), lines, entries).estimate).toBe('partial');
   });
 });

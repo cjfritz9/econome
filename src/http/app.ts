@@ -17,6 +17,7 @@ import { buyListFrom, NothingPlannedError } from '../services/week-list.ts';
 import type { RoutineTrigger, Routines } from '../sources/routines.ts';
 import { bearerToken, dateParam, jsonBody, type Env } from './context.ts';
 import { jobRoutes } from './jobs.ts';
+import { planRoutes } from './plan.ts';
 import { shopRoutes, type ShopDeps } from './shop.ts';
 
 export interface TokenVerifier {
@@ -97,7 +98,12 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
 
   app.get('/health', (c) => c.json({ ok: true }));
 
-  app.use('/api/*', cors({ origin: allowedOrigins, allowHeaders: ['Authorization', 'Content-Type'], allowMethods: ['GET', 'POST', 'PUT'] }));
+  app.use('/api/*', cors({ origin: (origin) => origin, allowHeaders: ['Authorization', 'Content-Type'], allowMethods: ['GET', 'POST', 'PUT'] }));
+  app.use('/api/*', async (c, next) => {
+    const origin = c.req.header('origin');
+    if (origin && !allowedOrigins.includes(origin)) throw new HTTPException(403, { message: `Économe doesn't accept requests from ${origin}.` });
+    await next();
+  });
   app.use('/api/*', signedIn);
 
   app.get('/api/household', async (c) => c.json(await describeHousehold(c.var.household, households, spend)));
@@ -123,6 +129,7 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
 
   app.route('/api', shopRoutes(shop));
   app.route('/api', jobRoutes(lookups));
+  app.route('/api', planRoutes(lookups));
 
   app.post('/routines/instacart-fill/result', fromRoutine, async (c) => {
     const result = await jsonBody(c, FillResultSchema);

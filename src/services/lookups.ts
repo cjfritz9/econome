@@ -2,7 +2,7 @@ import { chooseWeek, type CalendarWeek } from '../core/calendar.ts';
 import { jobHousehold, newJobId, rankFound, researchRequest, type Candidate, type Found, type LookupItem } from '../core/lookups.ts';
 import { householdOf, type Household, type Households } from '../data/household.ts';
 import { idsOf } from '../data/ingredients.ts';
-import { isExpired, jobState, readJob, recentSince, type Job, type JobData, type Jobs } from '../data/jobs.ts';
+import { isExpired, jobState, latestFinds, readJob, recentSince, type Job, type JobData, type Jobs } from '../data/jobs.ts';
 import { forIngredient } from '../data/product-memory.ts';
 import { logger } from '../logger.ts';
 import type { RoutineTrigger, Routines } from '../sources/routines.ts';
@@ -91,13 +91,25 @@ export const lookupService = (deps: LookupDeps) => {
     return items.map((item) => ({ ...item, ingredientId: idOf(item.ingredient) }));
   };
 
+  const withoutProduct = async (household: Household, date: string, by: string) => {
+    const items = await listItems(household, date, by);
+    return items.filter(({ pick }) => !pick).map(({ ingredientId, ingredient, search }) => ({ ingredientId, ingredient, term: search ?? ingredient }));
+  };
+
   const startLookup = async (household: Household, date: string, by: string) => {
     const week = chooseWeek(household.settings.timezone, date);
-    const items = await listItems(household, date, by);
-    const wanted = items.filter(({ pick }) => !pick).map(({ ingredientId, ingredient, search }) => ({ ingredientId, ingredient, term: search ?? ingredient }));
+    const wanted = await withoutProduct(household, date, by);
     if (wanted.length === 0) throw new RefusedError('Every item on the list has a product already.');
     const running = (await loadRecentJobs(jobs, household.id, now())).find((job) => job.kind === 'lookup' && job.week.id === week.id && isRunning(job));
     return running ?? start(household, 'lookup', week, wanted, by);
+  };
+
+  const lookUpNew = async (household: Household, date: string, by: string) => {
+    const week = chooseWeek(household.settings.timezone, date);
+    const [wanted, recent] = await Promise.all([withoutProduct(household, date, by), loadRecentJobs(jobs, household.id, now())]);
+    const { found, pending } = latestFinds(recent, week.id, now());
+    const fresh = wanted.filter(({ ingredientId }) => !found.has(ingredientId) && !pending.has(ingredientId));
+    return fresh.length > 0 ? start(household, 'lookup', week, fresh, by) : null;
   };
 
   const startSearch = async (household: Household, date: string, ingredientId: string, query: string, by: string) => {
@@ -183,5 +195,5 @@ export const lookupService = (deps: LookupDeps) => {
     return { job: jobId, recorded: Object.keys(found).length, state: finished ? (failure ? 'failed' : 'done') : 'running' };
   };
 
-  return { startLookup, startSearch, running, find, record };
+  return { startLookup, lookUpNew, startSearch, running, find, record };
 };

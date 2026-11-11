@@ -1,3 +1,4 @@
+import { setTimeout as sleep } from 'node:timers/promises';
 import * as z from 'zod';
 
 const FDC_BASE = 'https://api.nal.usda.gov/fdc/v1';
@@ -122,13 +123,16 @@ export const toFood = (json: FoodJson): FdcFood => {
   };
 };
 
-export const fdcClient = (apiKey: string, fetchJson: typeof fetch = fetch): FoodData => {
+export const fdcClient = (apiKey: string, fetchJson: typeof fetch = fetch, retryDelayMs = 500): FoodData => {
   const post = async (path: string, body: unknown): Promise<unknown> => {
-    const response = await fetchJson(`${FDC_BASE}${path}?api_key=${encodeURIComponent(apiKey)}`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'user-agent': 'Econome (household grocery planner)' },
-      body: JSON.stringify(body),
-    });
+    const send = () =>
+      fetchJson(`${FDC_BASE}${path}?api_key=${encodeURIComponent(apiKey)}`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'user-agent': 'Econome (household grocery planner)' },
+        body: JSON.stringify(body),
+      });
+    const first = await send();
+    const response = first.status >= 500 ? await sleep(retryDelayMs).then(send) : first;
     if (response.status === 429) throw new Error("FoodData Central's hourly request limit is used up. Try again in an hour.");
     if (!response.ok) throw new Error(`FoodData Central answered ${response.status}.`);
     return response.json();

@@ -44,11 +44,19 @@ const gapReason = (parsed: ParsedLine | undefined, entry: IngredientEntry | unde
 
 const round = (value: number, places: number) => Number(value.toFixed(places));
 
+const TABLESPOON_ML = 14.7868;
+
+const isNegligible = ({ amount, unit }: LineParse) => {
+  const ml = ML_PER[unit];
+  return ml !== undefined && amount * ml <= TABLESPOON_ML;
+};
+
 export const recipeNutrition = (recipe: Recipe, lines: Map<string, ParsedLine>, entries: Map<string, IngredientEntry>) => {
   const totals: Nutrients = { kcal: 0, protein: 0, carbs: 0, sugar: 0, fiber: 0, fat: 0 };
   const gaps: string[] = [];
   const unknown = new Map<string, Set<Nutrient>>();
   let counted = 0;
+  let leftOut = 0;
 
   for (const line of recipe.ingredientGroups.flatMap(({ ingredients }) => ingredients)) {
     const parsed = lines.get(lineKey(line));
@@ -60,6 +68,7 @@ export const recipeNutrition = (recipe: Recipe, lines: Map<string, ParsedLine>, 
     const reason = gapReason(parsed, entry);
     if (reason || !parsed || !entry?.food?.per100g) {
       gaps.push(`${formatLine(line)} (${reason})`);
+      if (!(parsed && reason?.startsWith('no weight for') && isNegligible(parsed.parse))) leftOut += 1;
       continue;
     }
     const grams = lineGrams(parsed.parse, entry) ?? 0;
@@ -72,7 +81,7 @@ export const recipeNutrition = (recipe: Recipe, lines: Map<string, ParsedLine>, 
   }
 
   const missing = [...unknown].map(([name, nutrients]) => `${name}: ${[...nutrients].join(', ')}`);
-  if (counted === 0) return { perServing: null, gaps, missing };
+  if (counted === 0) return { perServing: null, gaps, missing, estimate: 'none' as const };
   const serving = (nutrient: Nutrient, places = 1) => round(totals[nutrient] / recipe.servings, places);
   const perServing: Nutrients = {
     kcal: serving('kcal', 0),
@@ -82,5 +91,5 @@ export const recipeNutrition = (recipe: Recipe, lines: Map<string, ParsedLine>, 
     fiber: serving('fiber'),
     fat: serving('fat'),
   };
-  return { perServing, gaps, missing };
+  return { perServing, gaps, missing, estimate: leftOut > 0 ? ('partial' as const) : ('complete' as const) };
 };

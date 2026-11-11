@@ -147,13 +147,28 @@ describe('the HTTP server', () => {
     expect(await response.json()).toEqual({ error: expect.stringMatching(reason) });
   });
 
-  it("answers CORS preflights for Mise's origin only", async () => {
+  it("serves Mise's origin, and refuses any other with a sentence the page can read", async () => {
     const { app } = setup();
-    const preflight = (origin: string) =>
-      app.request('/api/household', { method: 'OPTIONS', headers: { Origin: origin, 'Access-Control-Request-Method': 'GET' } });
+    const elsewhere = 'http://localhost:3000';
+    const fromOrigin = (origin: string, method = 'GET') =>
+      app.request('/api/household', { method, headers: { Origin: origin, Authorization: 'Bearer token-1', 'Access-Control-Request-Method': 'GET' } });
 
-    expect((await preflight(MISE)).headers.get('access-control-allow-origin')).toBe(MISE);
-    expect((await preflight('https://elsewhere.example.com')).headers.get('access-control-allow-origin')).toBeNull();
+    expect((await fromOrigin(MISE, 'OPTIONS')).headers.get('access-control-allow-origin')).toBe(MISE);
+    const served = await fromOrigin(MISE);
+    expect(served.status).toBe(200);
+    expect(served.headers.get('access-control-allow-origin')).toBe(MISE);
+
+    expect((await fromOrigin(elsewhere, 'OPTIONS')).status).toBe(204);
+    const refused = await fromOrigin(elsewhere);
+    expect(refused.status).toBe(403);
+    expect(refused.headers.get('access-control-allow-origin')).toBe(elsewhere);
+    expect(await refused.json()).toEqual({ error: "Économe doesn't accept requests from http://localhost:3000." });
+  });
+
+  it('serves requests without an Origin, such as curl or a routine', async () => {
+    const { app } = setup();
+
+    expect((await app.request('/api/household', signedIn('token-1'))).status).toBe(200);
   });
 });
 
