@@ -142,6 +142,17 @@ describe('products', () => {
     expect(row(reviewed.body.items, 'lemon')).toMatchObject({ status: 'ready' });
   });
 
+  it("counts packages from what one covers, when the size doesn't say", async () => {
+    const { call } = setup();
+
+    const bySize = await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '333', name: 'Lemons, Bagged', size: '2 lb' });
+    expect(row(bySize.body.items, 'lemon')).toMatchObject({ pick: { packages: null } });
+
+    const byCount = await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '333', name: 'Lemons, Bagged', size: '2 lb', covers: 6 });
+    expect(row(byCount.body.items, 'lemon')).toMatchObject({ pick: { packages: 1 } });
+    expect((await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '333', name: 'Lemons, Bagged', covers: 0 })).status).toBe(400);
+  });
+
   it('turns down a product for an ingredient', async () => {
     const { call, products } = setup();
 

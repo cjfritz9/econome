@@ -46,7 +46,7 @@ describe('lookups', () => {
     expect(harness.fired).toHaveLength(1);
   });
 
-  it("records the routine's results vegan-checked and ranked, and finishes the job", async () => {
+  it("records the routine's results vegan-checked, in the routine's order, and finishes the job", async () => {
     const harness = setup({ branded });
     const jobId = await startLookup(harness);
 
@@ -57,8 +57,8 @@ describe('lookups', () => {
     expect(item(products.items, 'lemon')).toMatchObject({
       status: 'choose',
       suggestions: [
-        { productId: '502', name: 'Wegmans Organic Lemons, 2 lb', vegan: { verdict: 'vegan' }, why: ['store brand'] },
         { productId: '501', name: 'Sunkist Lemon', packages: 1, vegan: { verdict: 'needs-review' }, why: ['1 covers the need'] },
+        { productId: '502', name: 'Wegmans Organic Lemons, 2 lb', vegan: { verdict: 'vegan' }, why: ['store brand'] },
       ],
     });
     expect((await harness.call('GET', `/jobs/${jobId}`)).body).toMatchObject({

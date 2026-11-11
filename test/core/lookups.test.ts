@@ -31,7 +31,7 @@ describe('researchRequest', () => {
 describe('rankFound', () => {
   const context = { item: tofu, entry: undefined, retailer: 'Wegmans', rejected: new Set<string>() };
 
-  it('puts vegan products first, keeps the routine order otherwise, and says why each fits', () => {
+  it("keeps the routine's best-fit order, whatever the vegan verdict, and says why each fits", () => {
     const found = rankFound(
       [
         { productId: '1', name: 'Hodo Organic Extra Firm Tofu', size: '16 oz', vegan: unsure },
@@ -41,10 +41,10 @@ describe('rankFound', () => {
       context,
     );
 
-    expect(found.suggestions.map(({ productId, why, packages }) => ({ productId, why, packages }))).toEqual([
-      { productId: '2', why: ['store brand', '2 cover the need'], packages: 2 },
-      { productId: '3', why: ['1 covers the need'], packages: 1 },
-      { productId: '1', why: ['2 cover the need'], packages: 2 },
+    expect(found.suggestions.map(({ productId, why, packages, vegan: { verdict } }) => ({ productId, why, packages, verdict }))).toEqual([
+      { productId: '1', why: ['2 cover the need'], packages: 2, verdict: 'needs-review' },
+      { productId: '2', why: ['store brand', '2 cover the need'], packages: 2, verdict: 'vegan' },
+      { productId: '3', why: ['1 covers the need'], packages: 1, verdict: 'vegan' },
     ]);
     expect(found.excluded).toEqual([]);
   });

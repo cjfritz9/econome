@@ -122,10 +122,13 @@ export const shopRoutes = (deps: ShopDeps) => {
   });
 
   routes.put('/weeks/:date/products/:ingredientId', async (c) => {
-    const { productId, name, size } = await jsonBody(c, z.object({ productId: ProductId, name: z.string().min(1), size: z.string().min(1).optional() }));
+    const { productId, name, size, covers } = await jsonBody(
+      c,
+      z.object({ productId: ProductId, name: z.string().min(1), size: z.string().min(1).optional(), covers: z.number().positive().optional() }),
+    );
     const date = dateParam(c);
     const ingredient = nameOf((await productsFor(c, date)).items, c.req.param('ingredientId'));
-    await store(c).chooseProduct(c.var.household, { ingredient, productId, name, ...(size && { size }) });
+    await store(c).chooseProduct(c.var.household, { ingredient, productId, name, ...(size && { size }), ...(covers && { covers }) });
     return c.json(await productsFor(c, date));
   });
 

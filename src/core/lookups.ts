@@ -70,8 +70,7 @@ export const rankFound = (
       kept.push({ productId, name, size, packages, vegan: { verdict: vegan.verdict, reasons: vegan.reasons }, why });
     }
   }
-  const vegansFirst = kept.filter(({ vegan }) => vegan.verdict === 'vegan').concat(kept.filter(({ vegan }) => vegan.verdict !== 'vegan'));
-  const shown = vegansFirst.slice(0, SUGGESTIONS_KEPT);
-  const overflow = vegansFirst.slice(SUGGESTIONS_KEPT).map(({ productId, name }) => ({ productId, name, reason: `beyond the top ${SUGGESTIONS_KEPT}` }));
+  const shown = kept.slice(0, SUGGESTIONS_KEPT);
+  const overflow = kept.slice(SUGGESTIONS_KEPT).map(({ productId, name }) => ({ productId, name, reason: `beyond the top ${SUGGESTIONS_KEPT}` }));
   return { suggestions: shown, excluded: [...excluded, ...overflow] };
 };
