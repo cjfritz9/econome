@@ -98,10 +98,23 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
 
   app.get('/health', (c) => c.json({ ok: true }));
 
-  app.use('/api/*', cors({ origin: (origin) => origin, allowHeaders: ['Authorization', 'Content-Type'], allowMethods: ['GET', 'POST', 'PUT'] }));
+  const isRefused = (origin: string | undefined, fetchSite: string | undefined) =>
+    Boolean(origin && !allowedOrigins.includes(origin) && (fetchSite === 'cross-site' || fetchSite === 'same-site'));
+
+  app.use(
+    '/api/*',
+    cors({
+      origin: (origin, c) => {
+        const readable = allowedOrigins.includes(origin) || c.req.method === 'OPTIONS' || isRefused(origin, c.req.header('sec-fetch-site'));
+        return readable ? origin : null;
+      },
+      allowHeaders: ['Authorization', 'Content-Type'],
+      allowMethods: ['GET', 'POST', 'PUT'],
+    }),
+  );
   app.use('/api/*', async (c, next) => {
     const origin = c.req.header('origin');
-    if (origin && !allowedOrigins.includes(origin)) throw new HTTPException(403, { message: `Économe doesn't accept requests from ${origin}.` });
+    if (isRefused(origin, c.req.header('sec-fetch-site'))) throw new HTTPException(403, { message: `Économe doesn't accept requests from ${origin}.` });
     await next();
   });
   app.use('/api/*', signedIn);

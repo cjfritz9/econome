@@ -147,22 +147,36 @@ describe('the HTTP server', () => {
     expect(await response.json()).toEqual({ error: expect.stringMatching(reason) });
   });
 
-  it("serves Mise's origin, and refuses any other with a sentence the page can read", async () => {
-    const { app } = setup();
-    const elsewhere = 'http://localhost:3000';
-    const fromOrigin = (origin: string, method = 'GET') =>
-      app.request('/api/household', { method, headers: { Origin: origin, Authorization: 'Bearer token-1', 'Access-Control-Request-Method': 'GET' } });
+  const elsewhere = 'http://localhost:3000';
+  const fromOrigin = (app: ReturnType<typeof setup>['app'], origin: string, { method = 'GET', site = 'cross-site' } = {}) =>
+    app.request('/api/household', {
+      method,
+      headers: { Origin: origin, 'Sec-Fetch-Site': site, Authorization: 'Bearer token-1', 'Access-Control-Request-Method': 'GET' },
+    });
 
-    expect((await fromOrigin(MISE, 'OPTIONS')).headers.get('access-control-allow-origin')).toBe(MISE);
-    const served = await fromOrigin(MISE);
+  it("serves Mise's origin, and refuses a browser on any other with a sentence the page can read", async () => {
+    const { app } = setup();
+
+    expect((await fromOrigin(app, MISE, { method: 'OPTIONS' })).headers.get('access-control-allow-origin')).toBe(MISE);
+    const served = await fromOrigin(app, MISE);
     expect(served.status).toBe(200);
     expect(served.headers.get('access-control-allow-origin')).toBe(MISE);
 
-    expect((await fromOrigin(elsewhere, 'OPTIONS')).status).toBe(204);
-    const refused = await fromOrigin(elsewhere);
+    expect((await fromOrigin(app, elsewhere, { method: 'OPTIONS' })).status).toBe(204);
+    const refused = await fromOrigin(app, elsewhere);
     expect(refused.status).toBe(403);
     expect(refused.headers.get('access-control-allow-origin')).toBe(elsewhere);
     expect(await refused.json()).toEqual({ error: "Économe doesn't accept requests from http://localhost:3000." });
+  });
+
+  it("serves a request a dev server proxied from its own origin, without letting a browser read it cross-origin", async () => {
+    const { app } = setup();
+
+    for (const site of ['same-origin', 'none']) {
+      const proxied = await fromOrigin(app, elsewhere, { method: 'GET', site });
+      expect(proxied.status).toBe(200);
+      expect(proxied.headers.get('access-control-allow-origin')).toBeNull();
+    }
   });
 
   it('serves requests without an Origin, such as curl or a routine', async () => {
