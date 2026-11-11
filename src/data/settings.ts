@@ -44,6 +44,11 @@ export const SettingsSchema = z.object({
         .min(1)
         .optional()
         .describe("The store the household shops on Instacart, by the name Instacart's connector uses, such as Wegmans"),
+      storeId: z
+        .string()
+        .regex(/^\d+$/, "Instacart's store id, digits only")
+        .optional()
+        .describe("Instacart's id for the household's own store location, the sid in its checkout link (instacart.com/store/checkout_v4?sid=…), so Mise links straight to that store's cart"),
     })
     .optional(),
   planningDirective: NotePath.refine((path) => path.startsWith('directives/'), 'A planning directive is a note under directives/')

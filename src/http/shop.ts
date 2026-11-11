@@ -74,7 +74,8 @@ export const shopRoutes = (deps: ShopDeps) => {
     const household = c.var.household;
     const week = chooseWeek(household.settings.timezone, date);
     const [{ buy, items, entries }, jobs] = await Promise.all([store(c).matchWeek(household, date), loadRecentJobs(deps.jobs, household.id, now())]);
-    return productsView({ week, buy, items, entries }, retailerOf(household), latestFinds(jobs, week.id, now()), now());
+    const shop = { retailer: retailerOf(household), storeId: household.settings.instacart?.storeId ?? null };
+    return productsView({ week, buy, items, entries }, shop, latestFinds(jobs, week.id, now()), now());
   };
 
   const plannedWeek = async (household: Household, date: string) => {

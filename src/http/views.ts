@@ -126,7 +126,7 @@ const productOf = ({ productId, name, size, packages, vegan }: NonNullable<Match
 
 export const productsView = (
   { week, buy, items, entries }: { week: CalendarWeek; buy: ListItem[]; items: MatchedItem[]; entries: IngredientEntry[] },
-  retailer: string,
+  { retailer, storeId }: { retailer: string; storeId: string | null },
   finds: Finds,
   now: Date,
 ) => {
@@ -156,6 +156,7 @@ export const productsView = (
   return {
     week: weekRef(week),
     retailer,
+    storeId,
     listHash: listHash(buy),
     lookup: finds.lookup && jobView(finds.lookup, now),
     blockers: { toChoose: counted('choose'), lookingUp: counted('looking-up'), veganQuestions: counted('vegan-question'), notVegan: counted('not-vegan') },

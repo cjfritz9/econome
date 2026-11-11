@@ -24,7 +24,7 @@ describe('SettingsSchema', () => {
       },
       planningDirective: 'directives/cutting.md',
       mealTargets: { breakfast: 0, lunch: 8, dinner: 12 },
-      instacart: { retailer: 'Wegmans' },
+      instacart: { retailer: 'Wegmans', storeId: '1234' },
     };
 
     expect(SettingsSchema.parse(settings)).toEqual(settings);
@@ -41,6 +41,7 @@ describe('SettingsSchema', () => {
     ['a fractional meal target', { mealTargets: { lunch: 2.5 } }],
     ['a box of part servings', { hungryroot: { boxServings: 12.5 } }],
     ['an empty Instacart store name', { instacart: { retailer: '' } }],
+    ['an Instacart store id that is not a number', { instacart: { storeId: 'wegmans' } }],
   ])('rejects %s', (_label, settings) => {
     expect(SettingsSchema.safeParse(settings).success).toBe(false);
   });

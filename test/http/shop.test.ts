@@ -125,7 +125,7 @@ describe('products', () => {
     const { status, body } = await call('GET', `/weeks/${DATE}/products`);
 
     expect(status).toBe(200);
-    expect(body).toMatchObject({ retailer: 'Wegmans', blockers: { toChoose: 1, veganQuestions: 0 } });
+    expect(body).toMatchObject({ retailer: 'Wegmans', storeId: '1234', blockers: { toChoose: 1, veganQuestions: 0 } });
     expect(row(body.items, 'extra-firm-tofu')).toMatchObject({ status: 'ready', pick: { productId: '111', packages: 2, vegan: { verdict: 'vegan' } } });
     expect(row(body.items, 'lemon')).toMatchObject({ status: 'choose', search: 'lemon', suggestions: [] });
     expect(body.listHash).toBe((await call('GET', `/weeks/${DATE}/list`)).body.listHash);

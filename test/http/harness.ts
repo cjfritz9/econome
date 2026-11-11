@@ -35,7 +35,7 @@ const recipeDocs: RecipeDoc[] = [
   { id: 'r1', data: { title: 'Tofu Scramble', description: '', servings: 2, tags: [], ingredientGroups: [{ ingredients: [tofu, lemon, salt] }] } },
 ];
 
-const home: HouseholdRecord = { id: 'h1', name: 'Home', members: ['uid1'], econome: { timezone: 'America/New_York', instacart: { retailer: 'Wegmans' } } };
+const home: HouseholdRecord = { id: 'h1', name: 'Home', members: ['uid1'], econome: { timezone: 'America/New_York', instacart: { retailer: 'Wegmans', storeId: '1234' } } };
 
 const households: Households = {
   findUserHouseholdId: async (uid) => (uid === 'uid1' ? 'h1' : undefined),
