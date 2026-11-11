@@ -23,6 +23,7 @@ import { logger } from '../logger.ts';
 import { NotFoundError, RefusedError } from './errors.ts';
 
 const LABEL_PARALLEL = 3;
+const SAVE_PARALLEL = 3;
 
 const UNANSWERED = {
   verdict: 'needs-review' as const,
@@ -50,6 +51,25 @@ export interface Choice {
   as?: 'preferred' | 'alternate';
   covers?: number;
 }
+
+export interface VeganAnswer {
+  productId: string;
+  name: string;
+  vegan: boolean;
+  note?: string;
+}
+
+export interface FailedChange {
+  ingredientId?: string;
+  productId: string;
+  error: string;
+}
+
+const failureOf = (error: unknown) => {
+  if (error instanceof RefusedError || error instanceof NotFoundError) return error.message;
+  logger.error({ err: error }, 'A product change in a batch failed');
+  return "Économe couldn't save this one just now. Try it again.";
+};
 
 const inBatches = async <T, R>(items: T[], size: number, run: (item: T) => Promise<R>) => {
   const results: R[] = [];
@@ -168,7 +188,7 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
     return { ingredient, storeSearchAs: saved.storeSearch };
   };
 
-  const reviewVegan = async (household: Household, { productId, name, vegan, note }: { productId: string; name: string; vegan: boolean; note?: string }) => {
+  const reviewVegan = async (household: Household, { productId, name, vegan, note }: VeganAnswer) => {
     const [memory, tallies, label] = await Promise.all([productMemory.list(household.id), veganLine.tallies(household.id), labelFor(name)]);
     const before = checkProduct(name, label, tallies);
     const concerns = concernsToCount(before);
@@ -238,7 +258,36 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
     return { week: week.id, checkedOut: true };
   };
 
-  return { matchWeek, checkProducts, veganDetail, chooseProduct, rejectProduct, setStoreSearch, reviewVegan, weekSection, approve, recordCart, markCheckedOut };
+  const saveMany = async (household: Household, veganAnswers: VeganAnswer[], choices: (Choice & { ingredientId?: string })[]): Promise<FailedChange[]> => {
+    const reviewed = await inBatches(veganAnswers, SAVE_PARALLEL, async (answer) =>
+      reviewVegan(household, answer).then(
+        () => null,
+        (error: unknown) => ({ productId: answer.productId, error: failureOf(error) }),
+      ),
+    );
+    const chosen = await inBatches(choices, SAVE_PARALLEL, async ({ ingredientId, ...choice }) =>
+      chooseProduct(household, choice).then(
+        () => null,
+        (error: unknown) => ({ ...(ingredientId && { ingredientId }), productId: choice.productId, error: failureOf(error) }),
+      ),
+    );
+    return [...reviewed, ...chosen].filter((failed) => failed !== null);
+  };
+
+  return {
+    matchWeek,
+    checkProducts,
+    veganDetail,
+    chooseProduct,
+    rejectProduct,
+    setStoreSearch,
+    reviewVegan,
+    saveMany,
+    weekSection,
+    approve,
+    recordCart,
+    markCheckedOut,
+  };
 };
 
 export type StoreService = ReturnType<typeof storeService>;

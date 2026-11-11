@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { BrandedFood } from '../../src/sources/fdc.ts';
 import { DATE, setup, WEEK } from './harness.ts';
 
 interface Row {
@@ -168,6 +169,51 @@ describe('products', () => {
     expect((await call('GET', '/products/111/vegan')).body).toMatchObject({ productId: '111', name: 'Organic Extra Firm Tofu', verdict: 'vegan' });
     expect((await call('GET', '/products/999/vegan')).status).toBe(404);
     expect((await call('GET', '/products/abc/vegan')).status).toBe(400);
+  });
+});
+
+const lemonCurd: BrandedFood = { fdcId: 7, description: 'LEMON CURD', brand: 'BONNE MAMAN', owner: null, ingredients: 'Sugar, Butter, Lemon Juice, Eggs' };
+
+describe('PUT /api/weeks/:date/products', () => {
+  const curd = { productId: '777', name: 'Bonne Maman Lemon Curd' };
+
+  it('saves vegan answers before choices, so one save can answer a question and choose that product', async () => {
+    const { call } = setup({ branded: { 'Bonne Maman Lemon Curd': [lemonCurd] } });
+
+    const { status, body } = await call('PUT', `/weeks/${DATE}/products`, {
+      choices: [{ ingredientId: 'lemon', ...curd, size: '11.25 oz', covers: 4 }],
+      veganAnswers: [{ ...curd, vegan: true }],
+    });
+
+    expect(status).toBe(200);
+    expect(body.failed).toEqual([]);
+    expect(row(body.items, 'lemon')).toMatchObject({ status: 'ready', pick: { productId: '777', packages: 1, vegan: { verdict: 'vegan' } } });
+    expect(body.listHash).toBe((await call('GET', `/weeks/${DATE}/products`)).body.listHash);
+  });
+
+  it('saves what it can and names each change it could not, in plain words', async () => {
+    const { call } = setup({ branded: { 'Bonne Maman Lemon Curd': [lemonCurd] } });
+
+    const { status, body } = await call('PUT', `/weeks/${DATE}/products`, {
+      choices: [
+        { ingredientId: 'lemon', ...curd },
+        { ingredientId: 'capers', productId: '888', name: 'Capers' },
+      ],
+    });
+
+    expect(status).toBe(200);
+    expect(body.failed).toEqual([
+      { ingredientId: 'capers', productId: '888', error: '"capers" isn\'t on this week\'s list.' },
+      { ingredientId: 'lemon', productId: '777', error: expect.stringMatching(/^Bonne Maman Lemon Curd looks non-vegan/) },
+    ]);
+    expect(row(body.items, 'lemon')).toMatchObject({ status: 'choose' });
+  });
+
+  it('turns away an empty save, or a malformed change', async () => {
+    const { call } = setup();
+
+    expect((await call('PUT', `/weeks/${DATE}/products`, {})).status).toBe(400);
+    expect((await call('PUT', `/weeks/${DATE}/products`, { veganAnswers: [{ productId: 'abc', name: 'x', vegan: true }] })).status).toBe(400);
   });
 });
 

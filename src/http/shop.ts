@@ -26,6 +26,23 @@ export interface ShopDeps extends ListDeps {
 }
 
 const ProductId = z.string().regex(/^\d+$/, 'An Instacart product id');
+const MAX_CHANGES = 50;
+
+const ChoiceBody = z.object({
+  productId: ProductId,
+  name: z.string().min(1),
+  size: z.string().min(1).optional(),
+  covers: z.number().positive().optional(),
+});
+
+const ChangesBody = z
+  .object({
+    veganAnswers: z.array(z.object({ productId: ProductId, name: z.string().min(1), vegan: z.boolean() })).max(MAX_CHANGES).default([]),
+    choices: z.array(ChoiceBody.extend({ ingredientId: z.string().min(1) })).max(MAX_CHANGES).default([]),
+  })
+  .refine(({ veganAnswers, choices }) => veganAnswers.length + choices.length > 0, { message: 'Send at least one vegan answer or product choice.' });
+
+const lastOfEach = <T>(items: T[], key: (item: T) => string) => [...new Map(items.map((item) => [key(item), item])).values()];
 
 const HaveBody = z
   .object({ ingredientId: z.string().min(1), state: z.enum(['none', 'some', 'all']), amount: OnHandSchema.shape.amount.optional(), unit: OnHandSchema.shape.unit.optional() })
@@ -122,14 +139,33 @@ export const shopRoutes = (deps: ShopDeps) => {
   });
 
   routes.put('/weeks/:date/products/:ingredientId', async (c) => {
-    const { productId, name, size, covers } = await jsonBody(
-      c,
-      z.object({ productId: ProductId, name: z.string().min(1), size: z.string().min(1).optional(), covers: z.number().positive().optional() }),
-    );
+    const { productId, name, size, covers } = await jsonBody(c, ChoiceBody);
     const date = dateParam(c);
     const ingredient = nameOf((await productsFor(c, date)).items, c.req.param('ingredientId'));
     await store(c).chooseProduct(c.var.household, { ingredient, productId, name, ...(size && { size }), ...(covers && { covers }) });
     return c.json(await productsFor(c, date));
+  });
+
+  routes.put('/weeks/:date/products', async (c) => {
+    const { veganAnswers, choices } = await jsonBody(c, ChangesBody);
+    const date = dateParam(c);
+    const ingredientOf = new Map((await productsFor(c, date)).items.map(({ ingredientId, ingredient }) => [ingredientId, ingredient]));
+    const notListed = choices
+      .filter(({ ingredientId }) => !ingredientOf.has(ingredientId))
+      .map(({ ingredientId, productId }) => ({ ingredientId, productId, error: `"${ingredientId}" isn't on this week's list.` }));
+    const listed = lastOfEach(
+      choices.filter(({ ingredientId }) => ingredientOf.has(ingredientId)),
+      ({ ingredientId }) => ingredientId,
+    ).map(({ ingredientId, productId, name, size, covers }) => ({
+      ingredientId,
+      ingredient: ingredientOf.get(ingredientId) ?? ingredientId,
+      productId,
+      name,
+      ...(size && { size }),
+      ...(covers && { covers }),
+    }));
+    const failed = await store(c).saveMany(c.var.household, lastOfEach(veganAnswers, ({ productId }) => productId), listed);
+    return c.json({ ...(await productsFor(c, date)), failed: [...notListed, ...failed] });
   });
 
   routes.post('/weeks/:date/products/:ingredientId/rejections', async (c) => {
