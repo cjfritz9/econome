@@ -22,15 +22,23 @@ export interface ListItem {
   alternatives?: string[];
   optional?: true;
   runningLow?: true;
+  firstTime?: true;
+  onHand?: OnHand;
   uses: string[];
   amount?: Need;
 }
+
+export interface OnHand {
+  amount: number;
+  unit: Unit | 'pack';
+}
+
+export type HaveAnswer = boolean | OnHand;
 
 export interface ShoppingList {
   buy: ListItem[];
   probablyHave: ListItem[];
   have: ListItem[];
-  decide: ListItem[];
   notBought: ListItem[];
   warnings: string[];
 }
@@ -136,16 +144,32 @@ const collectUses = (meals: PlannedMeal[], recipes: Recipe[], lines: Map<string,
 
 const byName = (a: ListItem, b: ListItem) => a.ingredient.localeCompare(b.ingredient);
 
+const describeOnHand = ({ amount, unit }: OnHand) => `${n(amount)} ${unit === 'pack' ? (amount === 1 ? 'pack' : 'packs') : unit}`;
+
+const afterOnHand = (item: ListItem, onHand: OnHand, warnings: string[]): ListItem | null => {
+  if (onHand.unit === 'pack') return item;
+  if (!item.amount || item.amount.unit !== onHand.unit) {
+    warnings.push(`${item.ingredient}: ${describeOnHand(onHand)} on hand can't be taken off ${item.need ?? 'its need'}; say how many packs instead.`);
+    return item;
+  }
+  const value = item.amount.value - onHand.amount;
+  if (value <= 0) return null;
+  const remaining: ListItem = { ...item, need: `${n(value)} ${item.amount.unit}`, amount: { ...item.amount, value } };
+  delete remaining.buy;
+  const buy = toBuy(value, item.amount.unit);
+  return { ...remaining, ...(buy && { buy }) };
+};
+
 export const buildList = (
   meals: PlannedMeal[],
   recipes: Recipe[],
   lines: Map<string, ParsedLine>,
   entries: IngredientEntry[],
-  have: Record<string, boolean> = {},
+  have: Record<string, HaveAnswer> = {},
 ): ShoppingList => {
   const warnings: string[] = [];
   const registry = new Map(entries.map((entry) => [entry.name, entry]));
-  const list: ShoppingList = { buy: [], probablyHave: [], have: [], decide: [], notBought: [], warnings };
+  const list: ShoppingList = { buy: [], probablyHave: [], have: [], notBought: [], warnings };
 
   for (const [ingredient, uses] of collectUses(meals, recipes, lines, warnings)) {
     const entry = registry.get(ingredient);
@@ -174,14 +198,18 @@ export const buildList = (
     };
     const buying = entry?.buying;
     const answer = have[ingredient];
+    const flags = { ...(!buying && { firstTime: true as const }), ...(buying === 'staple' && { runningLow: true as const }) };
     if (buying === 'never') list.notBought.push(item);
     else if (answer === true) list.have.push(item);
-    else if (buying === 'staple' && answer === false) list.buy.push({ ...item, runningLow: true });
+    else if (typeof answer === 'object') {
+      const remaining = afterOnHand(item, answer, warnings);
+      if (remaining) list.buy.push({ ...remaining, ...flags, onHand: answer });
+      else list.have.push({ ...item, onHand: answer });
+    } else if (buying === 'staple' && answer === false) list.buy.push({ ...item, runningLow: true });
     else if (buying === 'staple') list.probablyHave.push(item);
-    else if (buying === 'weekly') list.buy.push(item);
-    else list.decide.push(item);
+    else list.buy.push({ ...item, ...(!buying && { firstTime: true as const }) });
   }
 
-  for (const section of [list.buy, list.probablyHave, list.have, list.decide, list.notBought]) section.sort(byName);
+  for (const section of [list.buy, list.probablyHave, list.have, list.notBought]) section.sort(byName);
   return list;
 };

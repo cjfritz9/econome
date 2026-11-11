@@ -4,6 +4,16 @@ import type { HouseholdRecord, Households } from '../../src/data/household.ts';
 import { emptyInstacartSection, type InstacartSection, type Weeks } from '../../src/data/weeks.ts';
 import { createApp } from '../../src/http/app.ts';
 import type { RoutineTrigger } from '../../src/sources/routines.ts';
+import {
+  answeringClaude,
+  fakeFoodData,
+  memoryDecisions,
+  memoryIngredients,
+  memoryNotes,
+  memoryParsedLines,
+  memoryProductMemory,
+  memoryVeganLine,
+} from '../fakes.ts';
 
 const MISE = 'https://mise.example.com';
 const SECRET = 'a-routine-secret-at-least-32-characters-long';
@@ -64,6 +74,15 @@ const setup = ({ sections = {}, fillRoutine = FILL_ROUTINE }: { sections?: Recor
     households,
     spend: { spentOn: async () => 0.01234 },
     weeks,
+    recipes: { listRecipeDocs: async () => [] },
+    parsedLines: memoryParsedLines().store,
+    ingredients: memoryIngredients().store,
+    notes: memoryNotes().store,
+    claude: answeringClaude(() => ({})).claude,
+    fdc: fakeFoodData({}).foodData,
+    productMemory: memoryProductMemory().store,
+    veganLine: memoryVeganLine().store,
+    decisions: memoryDecisions().store,
     routines: {
       fire: async (trigger, payload) => {
         fired.push({ trigger, payload });

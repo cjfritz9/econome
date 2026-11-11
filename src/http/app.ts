@@ -8,16 +8,20 @@ import { chooseWeek } from '../core/calendar.ts';
 import { fillRequest, fillTarget, newFillId } from '../core/instacart-fill.ts';
 import { compareCart } from '../core/instacart-match.ts';
 import { AccessError, ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
-import { describeHousehold, requireHousehold, type DailySpend, type Household, type Households } from '../data/household.ts';
+import { describeHousehold, requireHousehold, type DailySpend, type Households } from '../data/household.ts';
 import { loadWeeks, type Weeks } from '../data/weeks.ts';
 import { logger } from '../logger.ts';
+import { NotFoundError, RefusedError } from '../services/errors.ts';
+import { NothingPlannedError } from '../services/week-list.ts';
 import type { RoutineTrigger, Routines } from '../sources/routines.ts';
+import { bearerToken, dateParam, type Env } from './context.ts';
+import { shopRoutes, type ShopDeps } from './shop.ts';
 
 export interface TokenVerifier {
   uidOf: (idToken: string) => Promise<string>;
 }
 
-export interface HttpDeps {
+export interface HttpDeps extends ShopDeps {
   verifier: TokenVerifier;
   access: Access;
   households: Households;
@@ -28,8 +32,6 @@ export interface HttpDeps {
   routineSecret: string | null;
   allowedOrigins: string[];
 }
-
-type Env = { Variables: { uid: string; household: Household } };
 
 const FillResultSchema = z.object({
   fill_id: z.string(),
@@ -44,14 +46,13 @@ const FillResultSchema = z.object({
   error: z.string().nullish(),
 });
 
-const bearerToken = (header: string | undefined) => header?.match(/^Bearer\s+(\S+)$/i)?.[1];
-
 const digest = (text: string) => createHash('sha256').update(text).digest();
 const sameSecret = (given: string, expected: string) => timingSafeEqual(digest(given), digest(expected));
 
 const sameStore = (a: string, b: string) => a.localeCompare(b, 'en', { sensitivity: 'base' }) === 0;
 
-export const createApp = ({ verifier, access, households, spend, weeks, routines, fillRoutine, routineSecret, allowedOrigins }: HttpDeps) => {
+export const createApp = ({ verifier, access, households, spend, routines, fillRoutine, routineSecret, allowedOrigins, ...shop }: HttpDeps) => {
+  const { weeks } = shop;
   const app = new Hono<Env>();
 
   const signedIn = createMiddleware<Env>(async (c, next) => {
@@ -67,17 +68,15 @@ export const createApp = ({ verifier, access, households, spend, weeks, routines
 
   app.get('/health', (c) => c.json({ ok: true }));
 
-  app.use('/api/*', cors({ origin: allowedOrigins, allowHeaders: ['Authorization', 'Content-Type'], allowMethods: ['GET', 'POST'] }));
+  app.use('/api/*', cors({ origin: allowedOrigins, allowHeaders: ['Authorization', 'Content-Type'], allowMethods: ['GET', 'POST', 'PUT'] }));
   app.use('/api/*', signedIn);
 
   app.get('/api/household', async (c) => c.json(await describeHousehold(c.var.household, households, spend)));
 
   app.post('/api/weeks/:date/instacart/fill', async (c) => {
     if (!fillRoutine) throw new HTTPException(503, { message: "The fill routine isn't set up on this server." });
-    const date = z.iso.date().safeParse(c.req.param('date'));
-    if (!date.success) throw new HTTPException(400, { message: 'Give the week as any date in it, as YYYY-MM-DD.' });
     const household = c.var.household;
-    const week = chooseWeek(household.settings.timezone, date.data);
+    const week = chooseWeek(household.settings.timezone, dateParam(c));
     const [planned] = await loadWeeks(weeks, household.id, [week]);
     const section = planned?.instacart;
     if (!section?.approved) throw new HTTPException(409, { message: `${week.id}'s Instacart cart isn't approved yet.` });
@@ -92,6 +91,8 @@ export const createApp = ({ verifier, access, households, spend, weeks, routines
     await weeks.saveInstacart(household.id, week.id, { ...section, sent: { fillId, sessionId: run.sessionId, by: c.var.uid, error: null }, filled: null });
     return c.json({ week: week.id, fillId, run: run.sessionUrl }, 202);
   });
+
+  app.route('/api', shopRoutes(shop));
 
   app.post('/routines/instacart-fill/result', async (c) => {
     if (!routineSecret) throw new HTTPException(503, { message: "Routine results aren't set up on this server." });
@@ -126,6 +127,8 @@ export const createApp = ({ verifier, access, households, spend, weeks, routines
   app.onError((error, c) => {
     if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
     if (error instanceof AccessError) return c.json({ error: error.message }, 403);
+    if (error instanceof NotFoundError || error instanceof NothingPlannedError) return c.json({ error: error.message }, 404);
+    if (error instanceof RefusedError) return c.json({ error: error.message }, 409);
     logger.error({ err: error, path: c.req.path }, 'Request failed');
     return c.json({ error: 'Something went wrong in Économe.' }, 500);
   });

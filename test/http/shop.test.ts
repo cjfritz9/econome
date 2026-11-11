@@ -1,0 +1,298 @@
+import { describe, expect, it } from 'vitest';
+import { reviewHash } from '../../src/core/product-check.ts';
+import type { HouseholdRecord, Households } from '../../src/data/household.ts';
+import { blankMemory, type RememberedProduct } from '../../src/data/product-memory.ts';
+import type { RecipeDoc } from '../../src/data/recipes.ts';
+import { createApp } from '../../src/http/app.ts';
+import {
+  answeringClaude,
+  entry,
+  fakeFoodData,
+  memoryDecisions,
+  memoryIngredients,
+  memoryNotes,
+  memoryParsedLines,
+  memoryProductMemory,
+  memoryVeganLine,
+  memoryWeeks,
+  parsedLine,
+  parseOf,
+} from '../fakes.ts';
+
+const WEEK = '2026-W46';
+const DATE = '2026-11-10';
+
+const tofu = { amount: 28, unit: 'oz', name: 'extra-firm tofu' };
+const lemon = { amount: 1, unit: '', name: 'lemon' };
+const salt = { amount: 1, unit: 'tsp', name: 'salt' };
+
+const recipeDocs: RecipeDoc[] = [
+  { id: 'r1', data: { title: 'Tofu Scramble', description: '', servings: 2, tags: [], ingredientGroups: [{ ingredients: [tofu, lemon, salt] }] } },
+];
+
+const home: HouseholdRecord = { id: 'h1', name: 'Home', members: ['uid1'], econome: { timezone: 'America/New_York', instacart: { retailer: 'Wegmans' } } };
+
+const households: Households = {
+  findUserHouseholdId: async (uid) => (uid === 'uid1' ? 'h1' : undefined),
+  findHousehold: async (id) => (id === 'h1' ? home : undefined),
+  findMemberProfiles: async (uids) => uids.map((uid) => ({ uid, name: `Member ${uid}` })),
+  updateSettings: async () => undefined,
+};
+
+const tofuProduct = (): RememberedProduct[] => [
+  { ...blankMemory('111', 'uid1', 'extra-firm tofu'), name: 'Organic Extra Firm Tofu', size: '14 oz', retailer: 'Wegmans', role: 'preferred' },
+  {
+    ...blankMemory('111', 'uid1'),
+    name: 'Organic Extra Firm Tofu',
+    size: '14 oz',
+    retailer: 'Wegmans',
+    vegan: { vegan: true, concerns: [], ingredientsHash: reviewHash(null), by: 'uid1' },
+  },
+];
+
+const setup = ({ planned = true }: { planned?: boolean } = {}) => {
+  const weeks = memoryWeeks(planned ? { [WEEK]: { meals: [{ recipeId: 'r1', title: 'Tofu Scramble', servings: 2 }] } } : {});
+  const ingredients = memoryIngredients([entry('extra-firm tofu', { buying: 'weekly' }), entry('salt', { buying: 'staple' })]);
+  const products = memoryProductMemory(tofuProduct());
+  const decisions = memoryDecisions();
+  const { claude, prompts } = answeringClaude(() => {
+    throw new Error('Claude should not be asked');
+  });
+  const app = createApp({
+    verifier: { uidOf: async (token) => (token === 'token-1' ? 'uid1' : Promise.reject(new Error('bad token'))) },
+    access: { featuresOf: async () => ['econome'] },
+    households,
+    spend: { spentOn: async () => 0 },
+    weeks: weeks.store,
+    recipes: { listRecipeDocs: async () => recipeDocs },
+    parsedLines: memoryParsedLines([
+      parsedLine(tofu, parseOf('extra-firm tofu', { amount: 28, unit: 'oz' }), 'claude', ['r1']),
+      parsedLine(lemon, parseOf('lemon'), 'claude', ['r1']),
+      parsedLine(salt, parseOf('salt', { unit: 'tsp' }), 'claude', ['r1']),
+    ]).store,
+    ingredients: ingredients.store,
+    notes: memoryNotes().store,
+    claude,
+    fdc: fakeFoodData({}).foodData,
+    productMemory: products.store,
+    veganLine: memoryVeganLine().store,
+    decisions: decisions.store,
+    routines: { fire: async () => ({ sessionId: 'cse_1', sessionUrl: 'https://claude.example.com/code/cse_1' }) },
+    fillRoutine: null,
+    routineSecret: null,
+    allowedOrigins: [],
+  });
+
+  const call = async (method: string, path: string, body?: unknown) => {
+    const response = await app.request(`/api${path}`, {
+      method,
+      headers: { Authorization: 'Bearer token-1', 'Content-Type': 'application/json' },
+      ...(body !== undefined && { body: JSON.stringify(body) }),
+    });
+    return { status: response.status, body: (await response.json()) as Record<string, unknown> & { [key: string]: never } };
+  };
+  return { call, weeks, ingredients, products, decisions, prompts };
+};
+
+interface Row {
+  ingredientId: string;
+  [key: string]: unknown;
+}
+
+const row = (rows: unknown, id: string) => (rows as Row[]).find(({ ingredientId }) => ingredientId === id);
+
+describe('GET /api/weeks/:date', () => {
+  it("shows the week's meals and where shopping stands", async () => {
+    const { call } = setup();
+
+    const { status, body } = await call('GET', `/weeks/${DATE}`);
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      week: { id: WEEK, start: '2026-11-09', end: '2026-11-15' },
+      saved: true,
+      meals: [{ recipeId: 'r1', title: 'Tofu Scramble', servings: 2, slot: 'dinner' }],
+      shop: { state: 'list' },
+    });
+  });
+
+  it('shows an unsaved week as empty', async () => {
+    const { call } = setup({ planned: false });
+
+    expect((await call('GET', `/weeks/${DATE}`)).body).toMatchObject({ saved: false, meals: [], shop: { state: 'not-saved' } });
+  });
+
+  it('turns away a date that is not one', async () => {
+    const { call } = setup();
+
+    expect((await call('GET', '/weeks/next-week')).status).toBe(400);
+  });
+});
+
+describe('the list', () => {
+  it('lists what to buy, with packs, first-time items and staples, without asking Claude for parsed lines', async () => {
+    const { call, prompts } = setup();
+
+    const { status, body } = await call('GET', `/weeks/${DATE}/list`);
+
+    expect(status).toBe(200);
+    expect(row(body.buy, 'extra-firm-tofu')).toMatchObject({
+      ingredient: 'extra-firm tofu',
+      need: { text: '28 oz', amount: 28, unit: 'oz' },
+      firstTime: false,
+      someAllowed: true,
+      have: { state: 'none' },
+      pack: { product: 'Organic Extra Firm Tofu', size: '14 oz', toBuy: 2 },
+    });
+    expect(row(body.buy, 'lemon')).toMatchObject({ firstTime: true, someAllowed: false });
+    expect(body.staples).toEqual([{ ingredientId: 'salt', ingredient: 'salt', thisWeek: '1 tsp', out: false }]);
+    expect(prompts).toEqual([]);
+  });
+
+  it('is not found for a week with nothing planned', async () => {
+    const { call } = setup({ planned: false });
+
+    expect((await call('GET', `/weeks/${DATE}/list`)).status).toBe(404);
+  });
+
+  it('takes packs on hand off what to buy, and returns the whole list', async () => {
+    const { call, weeks } = setup();
+
+    const { status, body } = await call('PUT', `/weeks/${DATE}/list/have`, { ingredientId: 'extra-firm-tofu', state: 'some', amount: 1, unit: 'pack' });
+
+    expect(status).toBe(200);
+    expect(row(body.buy, 'extra-firm-tofu')).toMatchObject({ have: { state: 'some', amount: 1, unit: 'pack' }, pack: { toBuy: 1 } });
+    expect(weeks.docs.get(WEEK)?.have).toEqual({ 'extra-firm tofu': { amount: 1, unit: 'pack' } });
+  });
+
+  it('moves an item to have, and back again', async () => {
+    const { call, weeks } = setup();
+
+    const all = await call('PUT', `/weeks/${DATE}/list/have`, { ingredientId: 'lemon', state: 'all' });
+    expect(row(all.body.have, 'lemon')).toMatchObject({ have: { state: 'all' } });
+    expect(row(all.body.buy, 'lemon')).toBeUndefined();
+
+    const none = await call('PUT', `/weeks/${DATE}/list/have`, { ingredientId: 'lemon', state: 'none' });
+    expect(row(none.body.buy, 'lemon')).toBeDefined();
+    expect(weeks.docs.get(WEEK)?.have).toEqual({});
+  });
+
+  it('asks for an amount with "some", and turns away an item not on the list', async () => {
+    const { call } = setup();
+
+    expect((await call('PUT', `/weeks/${DATE}/list/have`, { ingredientId: 'extra-firm-tofu', state: 'some' })).status).toBe(400);
+    expect((await call('PUT', `/weeks/${DATE}/list/have`, { ingredientId: 'capers', state: 'all' })).status).toBe(404);
+  });
+
+  it('puts a staple that ran out on the buy list', async () => {
+    const { call } = setup();
+
+    const out = await call('PUT', `/weeks/${DATE}/list/staples`, { ingredientId: 'salt', out: true });
+    expect(out.body.staples).toEqual([]);
+    expect(row(out.body.buy, 'salt')).toMatchObject({ runningLow: true });
+
+    const back = await call('PUT', `/weeks/${DATE}/list/staples`, { ingredientId: 'salt', out: false });
+    expect(row(back.body.staples, 'salt')).toBeDefined();
+  });
+
+  it('keeps a first-time ingredient stocked, as a decision', async () => {
+    const { call, ingredients, decisions } = setup();
+
+    const { status, body } = await call('PUT', '/ingredients/lemon/buying', { buying: 'stocked' });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({ ingredientId: 'lemon', ingredient: 'lemon', buying: 'stocked' });
+    expect([...ingredients.stored.values()].find(({ name }) => name === 'lemon')?.buying).toBe('staple');
+    expect(decisions.recorded).toEqual([
+      { kind: 'ingredient-buying', input: ['lemon'], suggestion: { lemon: null }, answer: { buying: 'staple', comesWith: null }, by: 'uid1' },
+    ]);
+    expect((await call('PUT', '/ingredients/capers/buying', { buying: 'never' })).status).toBe(404);
+  });
+});
+
+describe('products', () => {
+  it("shows each item's product and what still blocks approval", async () => {
+    const { call } = setup();
+
+    const { status, body } = await call('GET', `/weeks/${DATE}/products`);
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ retailer: 'Wegmans', blockers: { toChoose: 1, veganQuestions: 0 } });
+    expect(row(body.items, 'extra-firm-tofu')).toMatchObject({ status: 'ready', pick: { productId: '111', packages: 2, vegan: { verdict: 'vegan' } } });
+    expect(row(body.items, 'lemon')).toMatchObject({ status: 'choose', search: 'lemon', suggestions: [] });
+    expect(body.listHash).toBe((await call('GET', `/weeks/${DATE}/list`)).body.listHash);
+  });
+
+  it('chooses a product, then settles its vegan question, returning the whole resource each time', async () => {
+    const { call } = setup();
+
+    const chosen = await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '222', name: 'Lemons', size: '1 each' });
+    expect(chosen.status).toBe(200);
+    expect(row(chosen.body.items, 'lemon')).toMatchObject({ status: 'vegan-question', pick: { productId: '222', name: 'Lemons' } });
+    expect(chosen.body.blockers).toEqual({ toChoose: 0, veganQuestions: 1 });
+
+    const reviewed = await call('PUT', `/weeks/${DATE}/products/vegan/222`, { name: 'Lemons', vegan: true });
+    expect(row(reviewed.body.items, 'lemon')).toMatchObject({ status: 'ready' });
+  });
+
+  it('turns down a product for an ingredient', async () => {
+    const { call, products } = setup();
+
+    const { status } = await call('POST', `/weeks/${DATE}/products/extra-firm-tofu/rejections`, { productId: '333', reason: 'silken' });
+
+    expect(status).toBe(200);
+    expect(products.stored.get('instacart_333_extra-firm-tofu')).toMatchObject({ role: 'rejected', reason: 'silken' });
+  });
+
+  it("explains a product's vegan verdict", async () => {
+    const { call } = setup();
+
+    expect((await call('GET', '/products/111/vegan')).body).toMatchObject({ productId: '111', name: 'Organic Extra Firm Tofu', verdict: 'vegan' });
+    expect((await call('GET', '/products/999/vegan')).status).toBe(404);
+    expect((await call('GET', '/products/abc/vegan')).status).toBe(400);
+  });
+});
+
+describe('the Instacart cart', () => {
+  it('approves the list it was shown, leaving out items without a product', async () => {
+    const { call } = setup();
+    const { listHash } = (await call('GET', `/weeks/${DATE}/products`)).body;
+
+    const { status, body } = await call('POST', `/weeks/${DATE}/instacart/approve`, { listHash });
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      week: { id: WEEK, start: '2026-11-09', end: '2026-11-15' },
+      lines: [{ ingredientId: 'extra-firm-tofu', ingredient: 'extra-firm tofu', productId: '111', product: 'Organic Extra Firm Tofu', quantity: 2 }],
+      notInCart: [{ ingredientId: 'lemon', ingredient: 'lemon' }],
+    });
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'approved', approved: { lines: 1 }, listChanged: false });
+  });
+
+  it('refuses a list that changed since it was shown', async () => {
+    const { call } = setup();
+
+    expect((await call('POST', `/weeks/${DATE}/instacart/approve`, { listHash: 'stale' })).status).toBe(409);
+  });
+
+  it('notices when the list changes after approval', async () => {
+    const { call } = setup();
+    const { listHash } = (await call('GET', `/weeks/${DATE}/products`)).body;
+    await call('POST', `/weeks/${DATE}/instacart/approve`, { listHash });
+
+    await call('PUT', `/weeks/${DATE}/list/have`, { ingredientId: 'extra-firm-tofu', state: 'some', amount: 1, unit: 'pack' });
+
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'approved', listChanged: true });
+  });
+
+  it('records the checkout', async () => {
+    const { call } = setup();
+    const { listHash } = (await call('GET', `/weeks/${DATE}/products`)).body;
+    await call('POST', `/weeks/${DATE}/instacart/approve`, { listHash });
+
+    const { status, body } = await call('POST', `/weeks/${DATE}/instacart/checked-out`);
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ state: 'checked-out', checkedOut: true });
+  });
+});

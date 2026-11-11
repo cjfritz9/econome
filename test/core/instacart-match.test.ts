@@ -71,6 +71,14 @@ describe('cartLines', () => {
     });
   });
 
+  it('takes packs on hand off the count, and leaves out an item whose packs are all on hand', () => {
+    const onHand = (packs: number) =>
+      cartLines([matchItem({ ...tofu, onHand: { amount: packs, unit: 'pack' } }, memory, undefined)]);
+
+    expect(onHand(1).lines).toEqual([{ ingredient: 'extra-firm tofu', productId: '18165406', quantity: 1, name: 'Wegmans Organic Extra Firm Tofu' }]);
+    expect(onHand(2)).toEqual({ lines: [], notInCart: [], needQuantity: [] });
+  });
+
   it("takes the household's quantity where given", () => {
     expect(cartLines(items, { lettuce: 1, 'extra-firm tofu': 3 }).lines.map(({ quantity }) => quantity)).toEqual([3, 1]);
   });
@@ -83,6 +91,13 @@ describe('listHash', () => {
 
     expect(listHash([a, b])).toBe(listHash([b, a]));
     expect(listHash([a])).not.toBe(listHash([{ ...a, need: '3 block' }]));
+  });
+
+  it('changes with packs on hand, and keeps the hash of a list without any', () => {
+    const a = item('tofu', { need: '2 block' });
+
+    expect(listHash([a])).not.toBe(listHash([{ ...a, onHand: { amount: 1, unit: 'pack' } }]));
+    expect(listHash([a])).toBe('81fe94b8cec56d28');
   });
 });
 

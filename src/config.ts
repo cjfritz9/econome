@@ -13,6 +13,8 @@ const McpEnvSchema = z.object({
 
 const HttpEnvSchema = z.object({
   FIREBASE_PROJECT_ID: z.string().min(1),
+  ANTHROPIC_API_KEY: z.string().min(1),
+  FDC_API_KEY: z.string().min(1),
   PORT: z.coerce.number().int().positive().default(DEFAULT_PORT),
   ECONOME_ALLOWED_ORIGINS: z
     .string()
@@ -36,6 +38,8 @@ export interface Config {
 
 export interface HttpConfig {
   firebaseProjectId: string;
+  anthropicApiKey: string;
+  fdcApiKey: string;
   port: number;
   allowedOrigins: string[];
   fillRoutine: RoutineTrigger | null;
@@ -65,6 +69,8 @@ export const loadHttpConfig = (env: NodeJS.ProcessEnv): HttpConfig => {
   const { INSTACART_FILL_CART_ROUTINE_URL: url, INSTACART_FILL_CART_ROUTINE_TOKEN: token } = parsed;
   return {
     firebaseProjectId: parsed.FIREBASE_PROJECT_ID,
+    anthropicApiKey: parsed.ANTHROPIC_API_KEY,
+    fdcApiKey: parsed.FDC_API_KEY,
     port: parsed.PORT,
     allowedOrigins: parsed.ECONOME_ALLOWED_ORIGINS,
     fillRoutine: url && token ? { url, token } : null,

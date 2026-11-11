@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildList, totalNeed } from '../../src/core/shopping-list.ts';
+import { buildList, totalNeed, type OnHand } from '../../src/core/shopping-list.ts';
 import type { Ingredient, Recipe } from '../../src/data/recipes.ts';
 import type { PlannedMeal } from '../../src/data/weeks.ts';
 import type { LineParse } from '../../src/llm/parse-ingredients.ts';
@@ -111,9 +111,12 @@ describe('buildList', () => {
   const list = buildList([meal(curry), meal(bowl)], [curry, bowl], lines, entries);
 
   it('merges an ingredient across recipes, with each recipe’s amount', () => {
-    expect(list.buy).toEqual([
-      { ingredient: 'extra-firm tofu', need: '3 block', uses: ['Curry: 2 block', 'Bowl: 1 block'], amount: { value: 3, unit: 'block' } },
-    ]);
+    expect(list.buy.find(({ ingredient }) => ingredient === 'extra-firm tofu')).toEqual({
+      ingredient: 'extra-firm tofu',
+      need: '3 block',
+      uses: ['Curry: 2 block', 'Bowl: 1 block'],
+      amount: { value: 3, unit: 'block' },
+    });
   });
 
   it('puts staples under probablyHave, with alternatives and lines that have no amount', () => {
@@ -125,10 +128,10 @@ describe('buildList', () => {
     ]);
   });
 
-  it('puts ingredients without a buying decision under decide, marking optional ones', () => {
-    expect(list.decide).toEqual([
-      { ingredient: 'capers', need: '1 tbsp', uses: ['Bowl: 1 tbsp'], amount: { value: 1, unit: 'tbsp' } },
-      { ingredient: 'shallot', need: '1 piece', optional: true, uses: ['Bowl: 1 piece (optional)'], amount: { value: 1, unit: 'piece' } },
+  it('buys ingredients without a buying decision, marked as a first time so the household can say how it buys them', () => {
+    expect(list.buy.filter(({ firstTime }) => firstTime)).toEqual([
+      { ingredient: 'capers', need: '1 tbsp', firstTime: true, uses: ['Bowl: 1 tbsp'], amount: { value: 1, unit: 'tbsp' } },
+      { ingredient: 'shallot', need: '1 piece', optional: true, firstTime: true, uses: ['Bowl: 1 piece (optional)'], amount: { value: 1, unit: 'piece' } },
     ]);
   });
 
@@ -159,12 +162,37 @@ describe('buildList', () => {
       capers: true,
     });
 
-    expect(answered.buy).toEqual([
-      { ingredient: 'soy sauce', need: '2 tbsp', alternatives: ['tamari'], runningLow: true, uses: ['Curry: 2 tbsp'], amount: { value: 2, unit: 'tbsp' } },
-    ]);
+    expect(answered.buy.map(({ ingredient }) => ingredient)).toEqual(['shallot', 'soy sauce']);
+    expect(answered.buy.find(({ ingredient }) => ingredient === 'soy sauce')).toEqual({
+      ingredient: 'soy sauce',
+      need: '2 tbsp',
+      alternatives: ['tamari'],
+      runningLow: true,
+      uses: ['Curry: 2 tbsp'],
+      amount: { value: 2, unit: 'tbsp' },
+    });
     expect(answered.have.map(({ ingredient }) => ingredient)).toEqual(['capers', 'extra-firm tofu', 'salt']);
     expect(answered.probablyHave.map(({ ingredient }) => ingredient)).toEqual(['black pepper', 'rice']);
-    expect(answered.decide.map(({ ingredient }) => ingredient)).toEqual(['shallot']);
+  });
+
+  it('takes an amount on hand off the need, and moves the item to have once it covers it', () => {
+    const tofu = (answer: OnHand) =>
+      buildList([meal(curry), meal(bowl)], [curry, bowl], lines, entries, { 'extra-firm tofu': answer });
+
+    expect(tofu({ amount: 1, unit: 'block' }).buy.find(({ ingredient }) => ingredient === 'extra-firm tofu')).toMatchObject({
+      need: '2 block',
+      amount: { value: 2, unit: 'block' },
+      onHand: { amount: 1, unit: 'block' },
+    });
+    expect(tofu({ amount: 3, unit: 'block' }).have).toEqual([expect.objectContaining({ ingredient: 'extra-firm tofu', onHand: { amount: 3, unit: 'block' } })]);
+  });
+
+  it('keeps packs on hand for the package count, and warns about an amount in a unit it cannot take off', () => {
+    const packs = buildList([meal(curry), meal(bowl)], [curry, bowl], lines, entries, { 'extra-firm tofu': { amount: 1, unit: 'pack' } });
+    const grams = buildList([meal(curry), meal(bowl)], [curry, bowl], lines, entries, { 'extra-firm tofu': { amount: 200, unit: 'g' } });
+
+    expect(packs.buy.find(({ ingredient }) => ingredient === 'extra-firm tofu')).toMatchObject({ need: '3 block', onHand: { amount: 1, unit: 'pack' } });
+    expect(grams.warnings).toContain("extra-firm tofu: 200 g on hand can't be taken off 3 block; say how many packs instead.");
   });
 
   it('keeps what is never bought under notBought whatever the answer', () => {

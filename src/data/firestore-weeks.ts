@@ -1,4 +1,4 @@
-import { Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore';
 import type { Weeks } from './weeks.ts';
 
 export const firestoreWeeks = (db: Firestore): Weeks => {
@@ -21,7 +21,8 @@ export const firestoreWeeks = (db: Firestore): Weeks => {
     },
 
     saveHave: async (householdId, weekId, have) => {
-      await weeks(householdId).doc(weekId).set({ have }, { merge: true });
+      const answers = Object.fromEntries(Object.entries(have).map(([name, answer]) => [name, answer ?? FieldValue.delete()]));
+      await weeks(householdId).doc(weekId).set({ have: answers }, { merge: true });
     },
 
     saveHungryroot: async (householdId, weekId, hungryroot, confirmedBy) => {

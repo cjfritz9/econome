@@ -1,9 +1,13 @@
 import { lineKey } from '../src/core/ingredient-lines.ts';
+import type { ConcernTally } from '../src/core/vegan.ts';
+import type { Decision, Decisions } from '../src/data/decisions.ts';
 import type { Household } from '../src/data/household.ts';
 import type { IngredientEntry, IngredientRegistry } from '../src/data/ingredients.ts';
 import type { Note, Notes } from '../src/data/notes.ts';
 import type { ParsedLine, ParsedLines } from '../src/data/parsed-lines.ts';
+import type { ProductMemory, RememberedProduct, VeganLine } from '../src/data/product-memory.ts';
 import type { Ingredient, Recipe } from '../src/data/recipes.ts';
+import type { Weeks } from '../src/data/weeks.ts';
 import type { Claude } from '../src/llm/claude.ts';
 import type { LineParse } from '../src/llm/parse-ingredients.ts';
 import type { BrandedFood, FdcFood, FoodData } from '../src/sources/fdc.ts';
@@ -137,4 +141,62 @@ export const fakeFoodData = (byQuery: Record<string, FdcFood[]>, brandedByQuery:
     },
   };
   return { foodData, queries };
+};
+
+export const memoryWeeks = (initial: Record<string, Record<string, unknown>> = {}) => {
+  const docs = new Map(Object.entries(initial));
+  const merge = (weekId: string, fields: Record<string, unknown>) => {
+    docs.set(weekId, { ...docs.get(weekId), ...fields });
+  };
+  const store: Weeks = {
+    findWeekDocs: async (_householdId, weekIds) => weekIds.flatMap((id) => (docs.has(id) ? [{ id, data: docs.get(id) }] : [])),
+    savePlan: async (_householdId, weekId, plan, plannedBy) => merge(weekId, { ...plan, plannedBy }),
+    saveHave: async (_householdId, weekId, answers) => {
+      const have = { ...(docs.get(weekId)?.have as Record<string, unknown> | undefined) };
+      for (const [name, answer] of Object.entries(answers)) {
+        if (answer === null) delete have[name];
+        else have[name] = answer;
+      }
+      merge(weekId, { have });
+    },
+    saveHungryroot: async (_householdId, weekId, hungryroot) => merge(weekId, { hungryroot }),
+    lockBox: async (_householdId, weekId) => merge(weekId, { boxLocked: true }),
+    saveInstacart: async (_householdId, weekId, instacart) => merge(weekId, { instacart }),
+  };
+  return { store, docs };
+};
+
+export const memoryProductMemory = (initial: RememberedProduct[] = []) => {
+  const stored = new Map(initial.map((product) => [product.id, product]));
+  const store: ProductMemory = {
+    list: async () => [...stored.values()],
+    save: async (_householdId, products) => {
+      for (const product of products) stored.set(product.id, product);
+    },
+  };
+  return { store, stored };
+};
+
+export const memoryVeganLine = () => {
+  const tallies = new Map<string, ConcernTally>();
+  const store: VeganLine = {
+    tallies: async () => new Map(tallies),
+    count: async (_householdId, concerns, ok) => {
+      for (const concern of concerns) {
+        const { ok: yes, notOk } = tallies.get(concern) ?? { ok: 0, notOk: 0 };
+        tallies.set(concern, ok ? { ok: yes + 1, notOk } : { ok: yes, notOk: notOk + 1 });
+      }
+    },
+  };
+  return { store, tallies };
+};
+
+export const memoryDecisions = () => {
+  const recorded: Decision[] = [];
+  const store: Decisions = {
+    record: async (_householdId, decision) => {
+      recorded.push(decision);
+    },
+  };
+  return { store, recorded };
 };

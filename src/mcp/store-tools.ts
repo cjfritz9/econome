@@ -1,72 +1,22 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import * as z from 'zod';
-import { chooseWeek } from '../core/calendar.ts';
-import { cartLines, compareCart, connectorItems, listHash, matchItem } from '../core/instacart-match.ts';
-import { bestLabel, checkProduct, labelQuery, reviewHash } from '../core/product-check.ts';
-import type { ListItem } from '../core/shopping-list.ts';
-import { concernsToCount } from '../core/vegan.ts';
-import type { Decisions } from '../data/decisions.ts';
 import type { Household } from '../data/household.ts';
-import { withStoreSearch, type IngredientRegistry } from '../data/ingredients.ts';
-import {
-  blankMemory,
-  forIngredient,
-  rememberedId,
-  reviewOf,
-  type ProductMemory,
-  type RememberedProduct,
-  type VeganLine,
-} from '../data/product-memory.ts';
-import { loadWeeks, type Weeks } from '../data/weeks.ts';
-import type { FoodData } from '../sources/fdc.ts';
-import { inBatches, jsonResult, WeekDate } from './shared.ts';
+import { retailerOf, storeService, type StoreDeps } from '../services/store.ts';
+import { jsonResult, WeekDate } from './shared.ts';
 
-const LABEL_PARALLEL = 3;
 const MAX_CHECKED = 20;
 
-interface StoreToolDeps {
+interface StoreToolDeps extends StoreDeps {
   member: () => Promise<Household>;
-  fdc: FoodData;
-  productMemory: ProductMemory;
-  veganLine: VeganLine;
-  ingredients: IngredientRegistry;
-  decisions: Decisions;
   actingUid: string;
-  buyList: (household: Household, date: string | undefined) => Promise<{ week: string; buy: ListItem[] }>;
-  weeks: Weeks;
 }
 
 const ProductId = z.string().regex(/^\d+$/, "An Instacart product_id, as the Instacart connector's search shows it");
 const ProductName = z.string().min(1).describe("The product's name exactly as the Instacart connector shows it, brand included");
 const Ingredient = z.string().min(1).describe('The ingredient as build_list or list_ingredients shows it');
 
-export const registerStoreTools = (
-  server: McpServer,
-  { member, fdc, productMemory, veganLine, ingredients, decisions, actingUid, buyList, weeks }: StoreToolDeps,
-) => {
-  const retailerOf = (household: Household) => {
-    const retailer = household.settings.instacart?.retailer;
-    if (!retailer) throw new Error("The household's Instacart store isn't set yet; save it with update_settings as instacart.retailer, such as Wegmans.");
-    return retailer;
-  };
-
-  const knownIngredient = async (householdId: string, ingredient: string) => {
-    const entries = await ingredients.list(householdId);
-    const entry = entries.find(({ name }) => name === ingredient);
-    if (!entry) throw new Error(`"${ingredient}" isn't a known ingredient. Use the name build_list or list_ingredients shows.`);
-    return { entries, entry };
-  };
-
-  const labelFor = async (name: string) => bestLabel(name, await fdc.branded(labelQuery(name)));
-
-  const matchWeek = async (household: Household, date: string | undefined) => {
-    const [{ week, buy }, memory, entries] = await Promise.all([buyList(household, date), productMemory.list(household.id), ingredients.list(household.id)]);
-    const byName = new Map(entries.map((entry) => [entry.name, entry]));
-    return { week, buy, items: buy.map((item) => matchItem(item, memory, byName.get(item.ingredient))) };
-  };
-
-  const recordFor = (memory: RememberedProduct[], productId: string, ingredient: string | null) =>
-    memory.find(({ id }) => id === rememberedId('instacart', productId, ingredient)) ?? blankMemory(productId, actingUid, ingredient);
+export const registerStoreTools = (server: McpServer, { member, actingUid, ...deps }: StoreToolDeps) => {
+  const store = storeService(deps, actingUid);
 
   server.registerTool(
     'match_instacart',
@@ -78,7 +28,7 @@ export const registerStoreTools = (
     async ({ week: date }) => {
       const household = await member();
       const retailer = retailerOf(household);
-      const { week, items } = await matchWeek(household, date);
+      const { week, items } = await store.matchWeek(household, date);
       return jsonResult({
         week,
         retailer,
@@ -98,16 +48,7 @@ export const registerStoreTools = (
         products: z.array(z.object({ productId: ProductId, name: ProductName })).min(1).max(MAX_CHECKED),
       }),
     },
-    async ({ products }) => {
-      const household = await member();
-      const [memory, tallies] = await Promise.all([productMemory.list(household.id), veganLine.tallies(household.id)]);
-      return jsonResult(
-        await inBatches(products, LABEL_PARALLEL, async ({ productId, name }) => {
-          const check = checkProduct(name, await labelFor(name), tallies, reviewOf(memory, productId));
-          return { productId, name, ...check };
-        }),
-      );
-    },
+    async ({ products }) => jsonResult(await store.checkProducts(await member(), products)),
   );
 
   server.registerTool(
@@ -128,40 +69,7 @@ export const registerStoreTools = (
           .describe("How much one package covers, in the list's unit for this ingredient, when the size doesn't say, such as 7 for a bunch of green onions"),
       }),
     },
-    async ({ ingredient, productId, name, size, as = 'preferred', covers }) => {
-      const household = await member();
-      const retailer = retailerOf(household);
-      await knownIngredient(household.id, ingredient);
-      const [memory, tallies, label] = await Promise.all([productMemory.list(household.id), veganLine.tallies(household.id), labelFor(name)]);
-      const vegan = checkProduct(name, label, tallies, reviewOf(memory, productId));
-      if (vegan.verdict === 'non-vegan') {
-        throw new Error(`${name} looks non-vegan (${vegan.reasons.join('; ')}). If that's wrong, review it with review_vegan first.`);
-      }
-      const details = { name, size: size ?? null, retailer };
-      const chosen = { ...recordFor(memory, productId, ingredient), ...details, role: as, reason: null, ...(covers && { covers }), decidedBy: actingUid };
-      const product = { ...recordFor(memory, productId, null), ...details, check: { verdict: vegan.verdict, reasons: vegan.reasons, label: vegan.label } };
-      const demoted =
-        as === 'preferred'
-          ? forIngredient(memory, ingredient, 'preferred')
-              .filter((other) => other.productId !== productId)
-              .map((other) => ({ ...other, role: 'alternate' as const }))
-          : [];
-      await productMemory.save(household.id, [chosen, product, ...demoted]);
-      await decisions.record(household.id, {
-        kind: 'product-choice',
-        input: { ingredient, store: 'instacart', retailer },
-        suggestion: demoted.map((other) => other.productId),
-        answer: { productId, name, size: size ?? null, role: as, covers: covers ?? null },
-        by: actingUid,
-      });
-      return jsonResult({
-        ingredient,
-        chosen: { productId, name, size: size ?? null },
-        as,
-        vegan,
-        ...(demoted.length > 0 && { nowAlternates: demoted.map((other) => other.name ?? other.productId) }),
-      });
-    },
+    async (choice) => jsonResult(await store.chooseProduct(await member(), choice)),
   );
 
   server.registerTool(
@@ -171,23 +79,7 @@ export const registerStoreTools = (
         'Record that an Instacart product is wrong for an ingredient, such as canned green beans when the recipes want fresh, so match_instacart lists it under rejected and it is never offered for that ingredient again. Saved as a decision; choose_product can bring it back.',
       inputSchema: z.object({ ingredient: Ingredient, productId: ProductId, name: ProductName.optional(), reason: z.string().min(1).optional() }),
     },
-    async ({ ingredient, productId, name, reason }) => {
-      const household = await member();
-      await knownIngredient(household.id, ingredient);
-      const memory = await productMemory.list(household.id);
-      const current = recordFor(memory, productId, ingredient);
-      await productMemory.save(household.id, [
-        { ...current, ...(name && { name }), role: 'rejected', reason: reason ?? null, decidedBy: actingUid },
-      ]);
-      await decisions.record(household.id, {
-        kind: 'product-choice',
-        input: { ingredient, store: 'instacart' },
-        suggestion: productId,
-        answer: { productId, name: name ?? null, role: 'rejected', reason: reason ?? null },
-        by: actingUid,
-      });
-      return jsonResult({ ingredient, rejected: name ?? productId, ...(reason && { reason }) });
-    },
+    async (rejection) => jsonResult(await store.rejectProduct(await member(), rejection)),
   );
 
   server.registerTool(
@@ -197,20 +89,7 @@ export const registerStoreTools = (
         'Teach Économe what to search the Instacart store for when an ingredient\'s own name finds the wrong products, such as "fresh green beans" for green beans. match_instacart gives it as the search term from then on. Saved as a decision.',
       inputSchema: z.object({ ingredient: Ingredient, term: z.string().min(3).describe('What to search the store for') }),
     },
-    async ({ ingredient, term }) => {
-      const household = await member();
-      const { entries, entry } = await knownIngredient(household.id, ingredient);
-      const saved = withStoreSearch(entries, ingredient, term);
-      await ingredients.save(household.id, [saved]);
-      await decisions.record(household.id, {
-        kind: 'store-search',
-        input: ingredient,
-        suggestion: entry.storeSearch ?? ingredient,
-        answer: saved.storeSearch,
-        by: actingUid,
-      });
-      return jsonResult({ ingredient, storeSearchAs: saved.storeSearch });
-    },
+    async ({ ingredient, term }) => jsonResult(await store.setStoreSearch(await member(), ingredient, term)),
   );
 
   server.registerTool(
@@ -220,38 +99,8 @@ export const registerStoreTools = (
         "Answer a vegan flag on an Instacart product: vegan or not, as the household judges it (or as you judged a single whole food with no ingredient list, saying so in the note). The answer sticks to the product until its ingredient list in FoodData Central changes, and teaches Économe the household's line: once a concern (natural flavors, sugar and the like) has three answers the same way and none the other way, it's decided automatically. A product named or listed with a meat is always asked about. Saved as a decision.",
       inputSchema: z.object({ productId: ProductId, name: ProductName, vegan: z.boolean(), note: z.string().min(1).optional() }),
     },
-    async ({ productId, name, vegan, note }) => {
-      const household = await member();
-      const [memory, tallies, label] = await Promise.all([productMemory.list(household.id), veganLine.tallies(household.id), labelFor(name)]);
-      const before = checkProduct(name, label, tallies);
-      const concerns = concernsToCount(before);
-      const product = recordFor(memory, productId, null);
-      await productMemory.save(household.id, [
-        {
-          ...product,
-          name,
-          vegan: { vegan, concerns, ingredientsHash: reviewHash(label), by: actingUid },
-          check: { verdict: before.verdict, reasons: before.reasons, label: before.label },
-        },
-      ]);
-      if (concerns.length > 0) await veganLine.count(household.id, concerns, vegan);
-      await decisions.record(household.id, {
-        kind: 'vegan-review',
-        input: { productId, store: 'instacart', name, ingredients: label?.ingredients ?? null, concerns },
-        suggestion: { verdict: before.verdict, reasons: before.reasons },
-        answer: { vegan, note: note ?? null },
-        by: actingUid,
-      });
-      return jsonResult({ product: name, vegan, wasJudged: before, ...(concerns.length > 0 && { counted: concerns }) });
-    },
+    async (review) => jsonResult(await store.reviewVegan(await member(), review)),
   );
-
-  const weekSection = async (household: Household, date: string | undefined) => {
-    const week = chooseWeek(household.settings.timezone, date);
-    const [planned] = await loadWeeks(weeks, household.id, [week]);
-    if (!planned) throw new Error(`Nothing is planned for ${week.id}.`);
-    return { week, section: planned.instacart };
-  };
 
   server.registerTool(
     'approve_instacart',
@@ -267,29 +116,12 @@ export const registerStoreTools = (
       }),
     },
     async ({ week: date, quantities }) => {
-      const household = await member();
-      const retailer = retailerOf(household);
-      const { week } = await weekSection(household, date);
-      const { items } = await matchWeek(household, date);
-      const { lines, notInCart, needQuantity } = cartLines(items, quantities);
-      if (needQuantity.length > 0) throw new Error(`Say how many to buy of: ${needQuantity.join(', ')} (pass them in quantities), then approve again.`);
-      const unsettled = items.filter(({ pick }) => pick && pick.vegan.verdict !== 'vegan');
-      if (unsettled.length > 0) {
-        const named = unsettled.map(({ ingredient, pick }) => `${ingredient} (${pick?.name ?? pick?.productId}: ${pick?.vegan.verdict})`);
-        throw new Error(`Settle these products' vegan checks with check_vegan or review_vegan first: ${named.join('; ')}.`);
-      }
-      await weeks.saveInstacart(household.id, week.id, {
-        retailer,
-        approved: { lines, listHash: listHash(items), by: actingUid },
-        sent: null,
-        filled: null,
-        checkedOut: null,
-      });
+      const { week, retailer, lines, notInCart, connector } = await store.approve(await member(), date, quantities);
       return jsonResult({
-        week: week.id,
+        week,
         retailer,
         lines: lines.map(({ ingredient, name, productId, quantity }) => ({ ingredient, product: name ?? productId, quantity })),
-        connector: { retailer_name: retailer, item_updates: connectorItems(lines) },
+        connector,
         ...(notInCart.length > 0 && { notInCart }),
         then: 'Add these with the Instacart connector, read the cart back, and pass its items to record_instacart_cart.',
       });
@@ -308,19 +140,8 @@ export const registerStoreTools = (
           .describe('Every item in the cart, with its product_id and quantity as the connector shows them'),
       }),
     },
-    async ({ week: date, items }) => {
-      const household = await member();
-      const { week, section } = await weekSection(household, date);
-      if (!section.approved) throw new Error(`${week.id}'s Instacart cart isn't approved yet; approve it with approve_instacart.`);
-      const lines = items.map(({ productId, quantity, name }) => ({ productId, quantity, name: name ?? null }));
-      await weeks.saveInstacart(household.id, week.id, { ...section, filled: { by: actingUid, lines, fillId: null } });
-      const { buy } = await buyList(household, date);
-      return jsonResult({
-        week: week.id,
-        ...compareCart(section.approved.lines, lines),
-        ...(listHash(buy) !== section.approved.listHash && { listChanged: 'The shopping list changed since approval; match and approve again.' }),
-      });
-    },
+    async ({ week: date, items }) =>
+      jsonResult(await store.recordCart(await member(), date, items.map(({ productId, quantity, name }) => ({ productId, quantity, name: name ?? null })))),
   );
 
   server.registerTool(
@@ -329,11 +150,6 @@ export const registerStoreTools = (
       description: "Record that the household checked out the week's Instacart order.",
       inputSchema: z.object({ week: WeekDate }),
     },
-    async ({ week: date }) => {
-      const household = await member();
-      const { week, section } = await weekSection(household, date);
-      await weeks.saveInstacart(household.id, week.id, { ...section, checkedOut: { by: actingUid } });
-      return jsonResult({ week: week.id, checkedOut: true });
-    },
+    async ({ week: date }) => jsonResult(await store.markCheckedOut(await member(), date)),
   );
 };

@@ -29,7 +29,8 @@ export interface MatchedItem {
 
 const packagesOf = (item: ListItem, product: RememberedProduct, entry: IngredientEntry | undefined) => {
   if (!item.amount) return null;
-  return product.covers ? packagesCovering(item.amount, product.covers) : packagesFor(item.amount, product.size, entry ?? NO_WEIGHTS);
+  const packages = product.covers ? packagesCovering(item.amount, product.covers) : packagesFor(item.amount, product.size, entry ?? NO_WEIGHTS);
+  return packages !== null && item.onHand?.unit === 'pack' ? Math.max(0, packages - item.onHand.amount) : packages;
 };
 
 const veganOf = (memory: RememberedProduct[], productId: string): ProductPick['vegan'] => {
@@ -64,9 +65,9 @@ export const matchItem = (item: ListItem, memory: RememberedProduct[], entry: In
   };
 };
 
-export const listHash = (items: Pick<ListItem, 'ingredient' | 'need'>[]) =>
+export const listHash = (items: Pick<ListItem, 'ingredient' | 'need' | 'onHand'>[]) =>
   createHash('sha256')
-    .update(JSON.stringify(items.map(({ ingredient, need }) => [ingredient, need]).sort()))
+    .update(JSON.stringify(items.map(({ ingredient, need, onHand }) => [ingredient, need, ...(onHand ? [onHand] : [])]).sort()))
     .digest('hex')
     .slice(0, 16);
 
@@ -80,6 +81,7 @@ export const cartLines = (items: MatchedItem[], quantities: Record<string, numbe
       continue;
     }
     const quantity = quantities[ingredient] ?? pick.packages;
+    if (quantity === 0) continue;
     if (!quantity) {
       needQuantity.push(ingredient);
       continue;

@@ -46,7 +46,7 @@ export interface IngredientRegistry {
 
 export const normalizeName = (name: string) => name.trim().toLowerCase();
 
-const ingredientId = (name: string) =>
+export const ingredientId = (name: string) =>
   normalizeName(name)
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');

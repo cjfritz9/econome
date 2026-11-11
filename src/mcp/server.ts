@@ -24,7 +24,6 @@ import {
   rankCandidates,
   recipeRecord
 } from '../core/hungryroot-box.ts';
-import { buildList } from '../core/shopping-list.ts';
 import {
   ECONOME_FEATURE,
   requireFeature,
@@ -92,10 +91,11 @@ import { LineParseSchema, UNITS } from '../llm/parse-ingredients.ts';
 import type { FoodData } from '../sources/fdc.ts';
 import { recipeLink, type HungryrootCatalog } from '../sources/hungryroot.ts';
 import type { ProductMemory, VeganLine } from '../data/product-memory.ts';
+import { weekList as buildWeekList } from '../services/week-list.ts';
 import { registerStoreTools } from './store-tools.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
-export const SERVER_VERSION = '0.31.0';
+export const SERVER_VERSION = '0.32.0';
 
 export interface ServerDeps {
   access: Access;
@@ -418,59 +418,14 @@ export const createServer = ({
   const weekList = async (
     household: Household,
     date: string | undefined,
-    { parse }: { parse: boolean }
+    options: { parse: boolean }
   ) => {
-    const week = chooseWeek(household.settings.timezone, date);
-    const [[planned], docs] = await Promise.all([
-      loadWeeks(weeks, household.id, [week]),
-      recipes.listRecipeDocs(household.id)
-    ]);
-    if (!planned || planned.meals.length === 0)
-      throw new Error(
-        `Nothing from Mise is planned for ${week.id} yet; plan it with plan_week first.`
-      );
-
-    const library = readLibrary(docs);
-    const planIds = new Set(planned.meals.map(({ recipeId }) => recipeId));
-    const cooked = library.recipes.filter(({ id }) => planIds.has(id));
-    const run = parse
-      ? await parseRecipes(
-          { claude, parsedLines, ingredients, notes },
-          household,
-          cooked
-        )
-      : {
-          stopped: null,
-          failed: [],
-          lines: indexByLine(await parsedLines.list(household.id))
-        };
-    const list = buildList(
-      planned.meals,
-      cooked,
-      run.lines,
-      await ingredients.list(household.id),
-      planned.have
+    const { week, planned, list, warnings } = await buildWeekList(
+      { weeks, recipes, parsedLines, ingredients, notes, claude },
+      household,
+      date,
+      options
     );
-
-    const titles = new Map(cooked.map(({ id, title }) => [id, title]));
-    const warnings = [
-      ...(run.stopped ? [`Parsing stopped: ${run.stopped}`] : []),
-      ...run.failed.map(
-        ({ recipeId, reason }) =>
-          `${titles.get(recipeId) ?? recipeId} couldn't be parsed: ${reason}`
-      ),
-      ...library.skippedLines
-        .filter(({ id }) => planIds.has(id))
-        .map(
-          ({ id, line, reason }) =>
-            `${titles.get(id) ?? id}: ${line} was left out of the recipe, to fix in Mise: ${reason}`
-        ),
-      ...unsureLines(cooked, run.lines).map(
-        ({ line, recipes: inRecipes, ingredient, doubt }) =>
-          `Check "${line}" (${inRecipes.join(', ')}), read as ${ingredient}: ${doubt}`
-      ),
-      ...list.warnings
-    ];
     return {
       week,
       result: {
@@ -482,9 +437,8 @@ export const createServer = ({
         buy: list.buy,
         probablyHave: list.probablyHave,
         have: list.have,
-        decide: list.decide,
         notBought: list.notBought,
-        warnings
+        warnings: warnings.map(({ message }) => message)
       }
     };
   };
@@ -501,7 +455,7 @@ export const createServer = ({
     'build_list',
     {
       description:
-        "Build a week's shopping list from its planned Mise meals: each recipe as written, merged by ingredient, with every recipe's amount under uses. Lines not parsed yet are parsed first. buy holds what's bought weekly and staples marked running low, with buy giving whole items where the need isn't whole. probablyHave holds staples, usually on hand: ask which are running low. have holds what the household said it already has this week. decide holds ingredients whose buying isn't settled: ask, then record it with set_buying. notBought holds what's never bought on its own. Record the answers with mark_have. warnings names everything left out or uncertain: show them all. The Hungryroot box's recipes add nothing, since the box brings their ingredients.",
+        "Build a week's shopping list from its planned Mise meals: each recipe as written, merged by ingredient, with every recipe's amount under uses. Lines not parsed yet are parsed first. buy holds what's bought weekly and staples marked running low, with buy giving whole items where the need isn't whole. probablyHave holds staples, usually on hand: ask which are running low. have holds what the household said it already has this week. In buy, firstTime marks an ingredient whose buying isn't settled yet: it's bought this week by default, so ask how the household buys it and record that with set_buying. onHand is an amount the household already has, taken off the need (in packs, it's taken off the package count instead). notBought holds what's never bought on its own. Record the answers with mark_have. warnings names everything left out or uncertain: show them all. The Hungryroot box's recipes add nothing, since the box brings their ingredients.",
       inputSchema: z.object({ week: WeekDate })
     },
     async ({ week: date }) =>
@@ -539,7 +493,7 @@ export const createServer = ({
         parse: false
       });
       const listed = new Set(
-        [result.buy, result.probablyHave, result.have, result.decide].flatMap(
+        [result.buy, result.probablyHave, result.have].flatMap(
           (section) => section.map(({ ingredient }) => ingredient)
         )
       );
@@ -1366,6 +1320,7 @@ export const createServer = ({
     productMemory,
     veganLine,
     ingredients,
+    parsedLines,
     decisions,
     actingUid,
     buyList: async (household, date) => {
