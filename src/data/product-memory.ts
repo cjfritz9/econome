@@ -7,7 +7,7 @@ export type Store = (typeof STORES)[number];
 export const ROLES = ['preferred', 'alternate', 'rejected'] as const;
 export type Role = (typeof ROLES)[number];
 
-const Verdict = z.enum(['vegan', 'non-vegan', 'needs-review']);
+const Verdict = z.enum(['vegan', 'non-vegan', 'needs-review', 'unlabelled']);
 
 export const RememberedProductSchema = z.object({
   store: z.enum(STORES),

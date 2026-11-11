@@ -52,7 +52,7 @@ export const checkProduct = (
   if (!label) {
     return fromName.length > 0
       ? { verdict: 'needs-review', reasons: fromName, source: 'no ingredient list', label: null }
-      : { verdict: 'needs-review', reasons: ['no ingredient list found for it in FoodData Central'], source: 'no ingredient list', label: null };
+      : { verdict: 'unlabelled', reasons: ['no ingredient list found for it in FoodData Central'], source: 'no ingredient list', label: null };
   }
   if (fromName.length === 0) return { ...check, label: described };
   return {

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 
-export type Verdict = 'vegan' | 'non-vegan' | 'needs-review';
+export type Verdict = 'vegan' | 'non-vegan' | 'needs-review' | 'unlabelled';
 
 export interface VeganCheck {
   verdict: Verdict;

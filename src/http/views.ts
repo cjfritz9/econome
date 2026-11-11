@@ -117,7 +117,8 @@ export const jobView = (job: Job, now: Date) => {
 };
 
 const productStatus = ({ pick }: MatchedItem, lookingUp: boolean) => {
-  if (pick) return pick.vegan.verdict === 'vegan' ? 'ready' : 'vegan-question';
+  if (pick?.vegan.verdict === 'non-vegan') return 'not-vegan';
+  if (pick) return pick.vegan.verdict === 'needs-review' ? 'vegan-question' : 'ready';
   return lookingUp ? 'looking-up' : 'choose';
 };
 
@@ -154,7 +155,7 @@ export const productsView = (
     retailer,
     listHash: listHash(buy),
     lookup: finds.lookup && jobView(finds.lookup, now),
-    blockers: { toChoose: counted('choose'), lookingUp: counted('looking-up'), veganQuestions: counted('vegan-question') },
+    blockers: { toChoose: counted('choose'), lookingUp: counted('looking-up'), veganQuestions: counted('vegan-question'), notVegan: counted('not-vegan') },
     items: shown,
   };
 };

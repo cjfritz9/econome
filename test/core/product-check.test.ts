@@ -61,9 +61,9 @@ describe('checkProduct', () => {
     expect(check.reasons).toEqual(["names a meat: check it's plant-based", 'the name says "pork": check it\'s plant-based']);
   });
 
-  it('asks about a product with no ingredient list found, so the household or Claude settles it once', () => {
+  it('calls a product with no ingredient list found unlabelled, a note rather than a question', () => {
     expect(checkProduct('Fresh Large Red Beefsteak Tomato', null)).toEqual({
-      verdict: 'needs-review',
+      verdict: 'unlabelled',
       reasons: ['no ingredient list found for it in FoodData Central'],
       source: 'no ingredient list',
       label: null,

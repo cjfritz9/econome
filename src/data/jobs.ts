@@ -10,7 +10,7 @@ const SuggestionSchema = z.object({
   name: z.string(),
   size: z.string().nullable(),
   packages: z.number().nullable(),
-  vegan: z.object({ verdict: z.enum(['vegan', 'non-vegan', 'needs-review']), reasons: z.array(z.string()) }),
+  vegan: z.object({ verdict: z.enum(['vegan', 'non-vegan', 'needs-review', 'unlabelled']), reasons: z.array(z.string()) }),
   why: z.array(z.string()),
 });
 

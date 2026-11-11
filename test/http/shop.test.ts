@@ -131,16 +131,40 @@ describe('products', () => {
     expect(body.listHash).toBe((await call('GET', `/weeks/${DATE}/list`)).body.listHash);
   });
 
-  it('chooses a product, then settles its vegan question, returning the whole resource each time', async () => {
+  it('takes a product with no ingredient list as ready, noting it unlabelled rather than asking', async () => {
     const { call } = setup();
 
     const chosen = await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '222', name: 'Lemons', size: '1 each' });
-    expect(chosen.status).toBe(200);
-    expect(row(chosen.body.items, 'lemon')).toMatchObject({ status: 'vegan-question', pick: { productId: '222', name: 'Lemons' } });
-    expect(chosen.body.blockers).toEqual({ toChoose: 0, lookingUp: 0, veganQuestions: 1 });
 
-    const reviewed = await call('PUT', `/weeks/${DATE}/products/vegan/222`, { name: 'Lemons', vegan: true });
+    expect(chosen.status).toBe(200);
+    expect(row(chosen.body.items, 'lemon')).toMatchObject({ status: 'ready', pick: { productId: '222', name: 'Lemons', vegan: { verdict: 'unlabelled' } } });
+    expect(chosen.body.blockers).toEqual({ toChoose: 0, lookingUp: 0, veganQuestions: 0, notVegan: 0 });
+  });
+
+  it('keeps a real vegan question open without holding up approval, and settles it when answered', async () => {
+    const { call } = setup({ branded: { 'Simply Lemonade': [lemonade] } });
+
+    const chosen = await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '333', name: 'Simply Lemonade', size: '52 fl oz' });
+    expect(row(chosen.body.items, 'lemon')).toMatchObject({ status: 'vegan-question', pick: { vegan: { verdict: 'needs-review' } } });
+    expect(chosen.body.blockers).toMatchObject({ veganQuestions: 1, notVegan: 0 });
+    expect((await call('POST', `/weeks/${DATE}/instacart/approve`, { listHash: chosen.body.listHash, quantities: { lemon: 1 } })).status).toBe(200);
+
+    const reviewed = await call('PUT', `/weeks/${DATE}/products/vegan/333`, { name: 'Simply Lemonade', vegan: true });
     expect(row(reviewed.body.items, 'lemon')).toMatchObject({ status: 'ready' });
+  });
+
+  it('holds up approval only for a product judged not vegan, until another is chosen', async () => {
+    const { call } = setup();
+    await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '222', name: 'Lemons', size: '1 each' });
+
+    const answered = await call('PUT', `/weeks/${DATE}/products/vegan/222`, { name: 'Lemons', vegan: false });
+    expect(row(answered.body.items, 'lemon')).toMatchObject({ status: 'not-vegan' });
+    expect(answered.body.blockers).toMatchObject({ notVegan: 1 });
+    const refused = await call('POST', `/weeks/${DATE}/instacart/approve`, { listHash: answered.body.listHash });
+    expect(refused).toEqual({ status: 409, body: { error: 'These products are judged not vegan; choose others first: lemon (Lemons).' } });
+
+    const swapped = await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '444', name: 'Organic Lemons', size: '1 each' });
+    expect((await call('POST', `/weeks/${DATE}/instacart/approve`, { listHash: swapped.body.listHash })).status).toBe(200);
   });
 
   it("counts packages from what one covers, when the size doesn't say", async () => {
@@ -172,6 +196,7 @@ describe('products', () => {
   });
 });
 
+const lemonade: BrandedFood = { fdcId: 8, description: 'LEMONADE', brand: 'SIMPLY', owner: null, ingredients: 'Water, Cane Sugar, Lemon Juice, Natural Flavors' };
 const lemonCurd: BrandedFood = { fdcId: 7, description: 'LEMON CURD', brand: 'BONNE MAMAN', owner: null, ingredients: 'Sugar, Butter, Lemon Juice, Eggs' };
 
 describe('PUT /api/weeks/:date/products', () => {

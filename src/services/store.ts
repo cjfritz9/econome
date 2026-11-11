@@ -26,7 +26,7 @@ const LABEL_PARALLEL = 3;
 const SAVE_PARALLEL = 3;
 
 const UNANSWERED = {
-  verdict: 'needs-review' as const,
+  verdict: 'unlabelled' as const,
   reasons: ["FoodData Central didn't answer, so its ingredients aren't checked yet"],
   source: 'no ingredient list' as const,
   label: null,
@@ -225,10 +225,10 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
     const { buy, items } = await matchWeek(household, date);
     const { lines, notInCart, needQuantity } = cartLines(items, quantities);
     if (needQuantity.length > 0) throw new RefusedError(`Say how many to buy of: ${needQuantity.join(', ')}, then approve again.`);
-    const unsettled = items.filter(({ pick }) => pick && pick.vegan.verdict !== 'vegan');
-    if (unsettled.length > 0) {
-      const named = unsettled.map(({ ingredient, pick }) => `${ingredient} (${pick?.name ?? pick?.productId}: ${pick?.vegan.verdict})`);
-      throw new RefusedError(`Settle these products' vegan checks first: ${named.join('; ')}.`);
+    const notVegan = items.filter(({ pick }) => pick?.vegan.verdict === 'non-vegan');
+    if (notVegan.length > 0) {
+      const named = notVegan.map(({ ingredient, pick }) => `${ingredient} (${pick?.name ?? pick?.productId})`);
+      throw new RefusedError(`These products are judged not vegan; choose others first: ${named.join('; ')}.`);
     }
     await weeks.saveInstacart(household.id, week.id, {
       retailer,

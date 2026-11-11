@@ -43,7 +43,7 @@ export const registerStoreTools = (server: McpServer, { member, actingUid, ...de
     'check_vegan',
     {
       description:
-        "Check Instacart products for vegan before proposing them. Instacart gives no ingredients, so each product is looked up in USDA FoodData Central's branded foods by brand and name, its ingredient list goes through Économe's vegan check (and the household's past answers), and its name is screened too. A household review of the product overrides all of it. When no list is found and the product is a single whole food (fresh produce, fresh herbs, plain beans), you may judge it vegan yourself and record that with review_vegan, noting it's your judgement; anything else goes to the household.",
+        "Check Instacart products for vegan before proposing them. Instacart gives no ingredients, so each product is looked up in USDA FoodData Central's branded foods by brand and name, its ingredient list goes through Économe's vegan check (and the household's past answers), and its name is screened too. A household review of the product overrides all of it. The verdict is vegan, non-vegan, needs-review (something in the list or name only the household can settle) or unlabelled (no ingredient list found, as for most fresh produce). Propose vegan and unlabelled products freely and point out needs-review ones; never propose non-vegan ones. Only non-vegan blocks approval: open questions wait for the week's review, so don't stop the shop to ask them.",
       inputSchema: z.object({
         products: z.array(z.object({ productId: ProductId, name: ProductName })).min(1).max(MAX_CHECKED),
       }),
@@ -106,7 +106,7 @@ export const registerStoreTools = (server: McpServer, { member, actingUid, ...de
     'approve_instacart',
     {
       description:
-        "Approve the week's Instacart cart on the household's yes: every item matched to a product the household chose, with its package count. Items without a chosen product stay out and are listed; every product must be judged vegan first. Returns the lines to show, and connector.item_updates ready for the Instacart connector's cart tool at the household's store (quantities are set, not added, and lines sharing a product are already combined). After adding them, read the cart back and pass its items to record_instacart_cart. If the shopping list changes later, approve again.",
+        "Approve the week's Instacart cart on the household's yes: every item matched to a product the household chose, with its package count. Items without a chosen product stay out and are listed. A product judged non-vegan blocks approval until another is chosen; open vegan questions and unlabelled products don't. Returns the lines to show, and connector.item_updates ready for the Instacart connector's cart tool at the household's store (quantities are set, not added, and lines sharing a product are already combined). After adding them, read the cart back and pass its items to record_instacart_cart. If the shopping list changes later, approve again.",
       inputSchema: z.object({
         week: WeekDate,
         quantities: z

@@ -34,7 +34,7 @@ describe('lookups', () => {
     ]);
     const products = (await harness.call('GET', `/weeks/${DATE}/products`)).body;
     expect(item(products.items, 'lemon')).toMatchObject({ status: 'looking-up', search: 'lemon' });
-    expect(products.blockers).toEqual({ toChoose: 0, lookingUp: 1, veganQuestions: 0 });
+    expect(products.blockers).toEqual({ toChoose: 0, lookingUp: 1, veganQuestions: 0, notVegan: 0 });
     expect(products.lookup).toMatchObject({ id: jobId, kind: 'lookup', state: 'running', week: WEEK, progress: { done: 0, total: 1 } });
   });
 
@@ -57,7 +57,7 @@ describe('lookups', () => {
     expect(item(products.items, 'lemon')).toMatchObject({
       status: 'choose',
       suggestions: [
-        { productId: '501', name: 'Sunkist Lemon', packages: 1, vegan: { verdict: 'needs-review' }, why: ['1 covers the need'] },
+        { productId: '501', name: 'Sunkist Lemon', packages: 1, vegan: { verdict: 'unlabelled' }, why: ['1 covers the need'] },
         { productId: '502', name: 'Wegmans Organic Lemons, 2 lb', vegan: { verdict: 'vegan' }, why: ['store brand'] },
       ],
     });
@@ -91,7 +91,7 @@ describe('lookups', () => {
     expect(reported).toEqual({ status: 200, body: { job: jobId, recorded: 1, state: 'done' } });
     expect(item((await harness.call('GET', `/weeks/${DATE}/products`)).body.items, 'lemon')).toMatchObject({
       suggestions: [
-        { productId: '501', vegan: { verdict: 'needs-review', reasons: ["FoodData Central didn't answer, so its ingredients aren't checked yet"] } },
+        { productId: '501', vegan: { verdict: 'unlabelled', reasons: ["FoodData Central didn't answer, so its ingredients aren't checked yet"] } },
         { productId: '502', vegan: { verdict: 'vegan' } },
       ],
     });
