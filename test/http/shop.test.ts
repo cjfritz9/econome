@@ -131,6 +131,21 @@ describe('products', () => {
     expect(body.listHash).toBe((await call('GET', `/weeks/${DATE}/list`)).body.listHash);
   });
 
+  it('offers the alternatives on an item that already has a product, so it can be changed', async () => {
+    const { call } = setup();
+    await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '222', name: 'Lemons', size: '1 each' });
+
+    const changed = await call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '444', name: 'Organic Lemons', size: '1 each' });
+
+    expect(row(changed.body.items, 'lemon')).toMatchObject({
+      status: 'ready',
+      pick: { productId: '444' },
+      suggestions: [{ productId: '222', name: 'Lemons', why: ['your alternate'] }],
+      search: 'lemon',
+    });
+    expect(row(changed.body.items, 'extra-firm-tofu')).toMatchObject({ status: 'ready', suggestions: [], search: 'extra-firm tofu' });
+  });
+
   it('takes a product with no ingredient list as ready, noting it unlabelled rather than asking', async () => {
     const { call } = setup();
 

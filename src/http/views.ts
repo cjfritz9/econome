@@ -131,22 +131,25 @@ export const productsView = (
   now: Date,
 ) => {
   const idOf = idsOf(entries);
+  const searchOf = new Map(entries.map(({ name, storeSearch }) => [name, storeSearch]));
   const shown = items.map((item, index) => {
     const id = idOf(item.ingredient);
     const found = finds.found.get(id);
     const status = productStatus(item, finds.pending.has(id));
     const listed = buy[index];
-    const alternates = item.alternates.map((alternate) => ({ ...productOf(alternate), why: ['your alternate'] }));
-    const known = new Set(alternates.map(({ productId }) => productId));
+    const picked = item.pick?.productId;
+    const alternates = item.alternates.filter(({ productId }) => productId !== picked).map((alternate) => ({ ...productOf(alternate), why: ['your alternate'] }));
+    const known = new Set([picked, ...alternates.map(({ productId }) => productId)]);
+    const offered = status !== 'looking-up';
     return {
       ingredientId: id,
       ingredient: item.ingredient,
       need: listed ? needOf(listed) : { text: item.need ?? 'as needed' },
       status,
       ...(item.pick && { pick: productOf(item.pick) }),
-      ...(status === 'choose' && { suggestions: [...alternates, ...(found?.suggestions ?? []).filter(({ productId }) => !known.has(productId))] }),
-      ...(status === 'choose' && found && found.excluded.length > 0 && { excluded: found.excluded }),
-      ...(!item.pick && { search: item.search }),
+      ...(offered && { suggestions: [...alternates, ...(found?.suggestions ?? []).filter(({ productId }) => !known.has(productId))] }),
+      ...(offered && found && found.excluded.length > 0 && { excluded: found.excluded }),
+      search: item.search ?? searchOf.get(item.ingredient) ?? item.ingredient,
     };
   });
   const counted = (status: string) => shown.filter((shownItem) => shownItem.status === status).length;

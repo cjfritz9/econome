@@ -147,6 +147,21 @@ describe('searches', () => {
     expect(item((await harness.call('GET', `/weeks/${DATE}/products`)).body.items, 'lemon')).toMatchObject({ suggestions: [{ productId: '502' }] });
   });
 
+  it("shows a search's results on an item that already has a product, leaving out the current pick", async () => {
+    const harness = setup({ branded });
+    await harness.call('PUT', `/weeks/${DATE}/products/lemon`, { productId: '502', name: 'Wegmans Organic Lemons, 2 lb', size: '2 lb' });
+    const { body } = await harness.call('POST', `/weeks/${DATE}/products/lemon/searches`, { query: 'lemons' });
+    const jobId = (body.job as { id: string }).id;
+
+    await harness.report({ job_id: jobId, results: [{ id: 'lemon', store: 'Wegmans', term: 'lemons', for: 'lemon', products: lemons }], done: true });
+
+    expect(item((await harness.call('GET', `/weeks/${DATE}/products`)).body.items, 'lemon')).toMatchObject({
+      status: 'ready',
+      pick: { productId: '502' },
+      suggestions: [{ productId: '501', name: 'Sunkist Lemon' }],
+    });
+  });
+
   it('turns away an item not on the list, and a query too short to search', async () => {
     const harness = setup({ branded });
 
