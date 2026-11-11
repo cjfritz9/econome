@@ -2,16 +2,12 @@ import type { CalendarWeek } from '../core/calendar.ts';
 import { compareCart, listHash, type MatchedItem } from '../core/instacart-match.ts';
 import type { ListItem } from '../core/shopping-list.ts';
 import type { Household } from '../data/household.ts';
-import { ingredientId, type IngredientEntry } from '../data/ingredients.ts';
+import { idsOf, type IngredientEntry } from '../data/ingredients.ts';
+import { jobError, jobState, type Finds, type Job } from '../data/jobs.ts';
 import { MEAL_SLOTS, weekCoverage, type InstacartSection, type PlannedWeek } from '../data/weeks.ts';
 import type { WeekList } from '../services/week-list.ts';
 
 export const weekRef = ({ id, start, end }: CalendarWeek) => ({ id, start, end });
-
-export const idsOf = (entries: IngredientEntry[]) => {
-  const byName = new Map(entries.map(({ name, id }) => [name, id]));
-  return (name: string) => byName.get(name) ?? ingredientId(name);
-};
 
 const needOf = ({ need, amount, buy }: ListItem) => ({
   text: need ?? 'as needed',
@@ -86,35 +82,79 @@ export const listView = ({ week, list, warnings, entries }: WeekList, match: (it
   };
 };
 
-const productStatus = ({ pick }: MatchedItem) => (!pick ? 'choose' : pick.vegan.verdict === 'vegan' ? 'ready' : 'vegan-question');
+const jobResult = (job: Job) => {
+  if (job.kind === 'search') {
+    const [searched] = job.items.map(({ ingredientId, ingredient }) => ({
+      ingredientId,
+      ingredient,
+      suggestions: job.found[ingredientId]?.suggestions ?? [],
+      excluded: job.found[ingredientId]?.excluded ?? [],
+    }));
+    return searched ?? { suggestions: [], excluded: [] };
+  }
+  const named = ({ ingredientId, ingredient }: Job['items'][number]) => ({ ingredientId, ingredient });
+  return {
+    found: job.items.filter(({ ingredientId }) => (job.found[ingredientId]?.suggestions.length ?? 0) > 0).length,
+    of: job.items.length,
+    nothingFor: job.items.filter(({ ingredientId }) => job.found[ingredientId]?.suggestions.length === 0).map(named),
+    notSearched: job.items.filter(({ ingredientId }) => !job.found[ingredientId]).map(named),
+  };
+};
+
+export const jobView = (job: Job, now: Date) => {
+  const state = jobState(job, now);
+  const error = jobError(job, now);
+  return {
+    id: job.id,
+    kind: job.kind,
+    state,
+    week: job.week.id,
+    progress: { done: job.items.filter(({ ingredientId }) => job.found[ingredientId]).length, total: job.items.length },
+    startedAt: job.startedAt,
+    ...(state !== 'running' && { result: jobResult(job) }),
+    ...(error && { error }),
+  };
+};
+
+const productStatus = ({ pick }: MatchedItem, lookingUp: boolean) => {
+  if (pick) return pick.vegan.verdict === 'vegan' ? 'ready' : 'vegan-question';
+  return lookingUp ? 'looking-up' : 'choose';
+};
 
 const productOf = ({ productId, name, size, packages, vegan }: NonNullable<MatchedItem['pick']>) => ({ productId, name, size, packages, vegan });
 
 export const productsView = (
   { week, buy, items, entries }: { week: CalendarWeek; buy: ListItem[]; items: MatchedItem[]; entries: IngredientEntry[] },
   retailer: string,
+  finds: Finds,
+  now: Date,
 ) => {
   const idOf = idsOf(entries);
   const shown = items.map((item, index) => {
-    const status = productStatus(item);
+    const id = idOf(item.ingredient);
+    const found = finds.found.get(id);
+    const status = productStatus(item, finds.pending.has(id));
     const listed = buy[index];
+    const alternates = item.alternates.map((alternate) => ({ ...productOf(alternate), why: ['your alternate'] }));
+    const known = new Set(alternates.map(({ productId }) => productId));
     return {
-      ingredientId: idOf(item.ingredient),
+      ingredientId: id,
       ingredient: item.ingredient,
       need: listed ? needOf(listed) : { text: item.need ?? 'as needed' },
       status,
       ...(item.pick && { pick: productOf(item.pick) }),
-      ...(status === 'choose' && { suggestions: item.alternates.map(productOf), search: item.search }),
+      ...(status === 'choose' && { suggestions: [...alternates, ...(found?.suggestions ?? []).filter(({ productId }) => !known.has(productId))] }),
+      ...(status === 'choose' && found && found.excluded.length > 0 && { excluded: found.excluded }),
+      ...(!item.pick && { search: item.search }),
     };
   });
+  const counted = (status: string) => shown.filter((shownItem) => shownItem.status === status).length;
   return {
     week: weekRef(week),
     retailer,
     listHash: listHash(buy),
-    blockers: {
-      toChoose: shown.filter(({ status }) => status === 'choose').length,
-      veganQuestions: shown.filter(({ status }) => status === 'vegan-question').length,
-    },
+    lookup: finds.lookup && jobView(finds.lookup, now),
+    blockers: { toChoose: counted('choose'), lookingUp: counted('looking-up'), veganQuestions: counted('vegan-question') },
     items: shown,
   };
 };

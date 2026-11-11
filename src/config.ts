@@ -23,10 +23,15 @@ const HttpEnvSchema = z.object({
     .pipe(z.array(z.url())),
   INSTACART_FILL_CART_ROUTINE_URL: z.url({ protocol: /^https$/ }).optional(),
   INSTACART_FILL_CART_ROUTINE_TOKEN: z.string().min(1).optional(),
+  INSTACART_RESEARCH_ROUTINE_URL: z.url({ protocol: /^https$/ }).optional(),
+  INSTACART_RESEARCH_ROUTINE_TOKEN: z.string().min(1).optional(),
   ECONOME_ROUTINE_SECRET: z.string().min(MIN_SECRET_LENGTH).optional(),
 }).refine(
   (env) => Boolean(env.INSTACART_FILL_CART_ROUTINE_URL) === Boolean(env.INSTACART_FILL_CART_ROUTINE_TOKEN),
   { message: 'Set both INSTACART_FILL_CART_ROUTINE_URL and INSTACART_FILL_CART_ROUTINE_TOKEN, or neither' },
+).refine(
+  (env) => Boolean(env.INSTACART_RESEARCH_ROUTINE_URL) === Boolean(env.INSTACART_RESEARCH_ROUTINE_TOKEN),
+  { message: 'Set both INSTACART_RESEARCH_ROUTINE_URL and INSTACART_RESEARCH_ROUTINE_TOKEN, or neither' },
 );
 
 export interface Config {
@@ -43,6 +48,7 @@ export interface HttpConfig {
   port: number;
   allowedOrigins: string[];
   fillRoutine: RoutineTrigger | null;
+  researchRoutine: RoutineTrigger | null;
   routineSecret: string | null;
 }
 
@@ -66,14 +72,15 @@ export const loadConfig = (env: NodeJS.ProcessEnv): Config => {
 
 export const loadHttpConfig = (env: NodeJS.ProcessEnv): HttpConfig => {
   const parsed = parseEnv(HttpEnvSchema, env);
-  const { INSTACART_FILL_CART_ROUTINE_URL: url, INSTACART_FILL_CART_ROUTINE_TOKEN: token } = parsed;
+  const trigger = (url: string | undefined, token: string | undefined) => (url && token ? { url, token } : null);
   return {
     firebaseProjectId: parsed.FIREBASE_PROJECT_ID,
     anthropicApiKey: parsed.ANTHROPIC_API_KEY,
     fdcApiKey: parsed.FDC_API_KEY,
     port: parsed.PORT,
     allowedOrigins: parsed.ECONOME_ALLOWED_ORIGINS,
-    fillRoutine: url && token ? { url, token } : null,
+    fillRoutine: trigger(parsed.INSTACART_FILL_CART_ROUTINE_URL, parsed.INSTACART_FILL_CART_ROUTINE_TOKEN),
+    researchRoutine: trigger(parsed.INSTACART_RESEARCH_ROUTINE_URL, parsed.INSTACART_RESEARCH_ROUTINE_TOKEN),
     routineSecret: parsed.ECONOME_ROUTINE_SECRET ?? null,
   };
 };

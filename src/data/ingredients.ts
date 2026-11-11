@@ -51,6 +51,11 @@ export const ingredientId = (name: string) =>
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '');
 
+export const idsOf = (entries: IngredientEntry[]) => {
+  const byName = new Map(entries.map(({ name, id }) => [name, id]));
+  return (name: string) => byName.get(name) ?? ingredientId(name);
+};
+
 const newEntry = (name: string): IngredientEntry => ({
   id: ingredientId(name),
   name,

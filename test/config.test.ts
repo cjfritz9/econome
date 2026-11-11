@@ -12,6 +12,7 @@ describe('loadHttpConfig', () => {
       port: 8080,
       allowedOrigins: [],
       fillRoutine: null,
+      researchRoutine: null,
       routineSecret: null,
     });
     expect(() => loadHttpConfig({ FIREBASE_PROJECT_ID: 'project-1' })).toThrow(/ANTHROPIC_API_KEY[\s\S]*FDC_API_KEY/);
@@ -30,13 +31,20 @@ describe('loadHttpConfig', () => {
         ...base,
         INSTACART_FILL_CART_ROUTINE_URL: 'https://api.example.com/fire',
         INSTACART_FILL_CART_ROUTINE_TOKEN: 'token',
+        INSTACART_RESEARCH_ROUTINE_URL: 'https://api.example.com/research',
+        INSTACART_RESEARCH_ROUTINE_TOKEN: 'research-token',
         ECONOME_ROUTINE_SECRET: 'x'.repeat(64),
       }),
-    ).toMatchObject({ fillRoutine: { url: 'https://api.example.com/fire', token: 'token' }, routineSecret: 'x'.repeat(64) });
+    ).toMatchObject({
+      fillRoutine: { url: 'https://api.example.com/fire', token: 'token' },
+      researchRoutine: { url: 'https://api.example.com/research', token: 'research-token' },
+      routineSecret: 'x'.repeat(64),
+    });
   });
 
   it('refuses half a routine, a plain-HTTP routine address or a short secret', () => {
     expect(() => loadHttpConfig({ ...base, INSTACART_FILL_CART_ROUTINE_URL: 'https://api.example.com/fire' })).toThrow(/both/);
+    expect(() => loadHttpConfig({ ...base, INSTACART_RESEARCH_ROUTINE_TOKEN: 'research-token' })).toThrow(/INSTACART_RESEARCH_ROUTINE_URL and/);
     expect(() => loadHttpConfig({ ...base, INSTACART_FILL_CART_ROUTINE_URL: 'http://api.example.com/fire', INSTACART_FILL_CART_ROUTINE_TOKEN: 't' })).toThrow(
       /INSTACART_FILL_CART_ROUTINE_URL/,
     );

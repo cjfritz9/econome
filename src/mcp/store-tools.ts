@@ -48,7 +48,7 @@ export const registerStoreTools = (server: McpServer, { member, actingUid, ...de
         products: z.array(z.object({ productId: ProductId, name: ProductName })).min(1).max(MAX_CHECKED),
       }),
     },
-    async ({ products }) => jsonResult(await store.checkProducts(await member(), products)),
+    async ({ products }) => jsonResult(await store.checkProducts((await member()).id, products)),
   );
 
   server.registerTool(

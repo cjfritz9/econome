@@ -6,6 +6,7 @@ import { firestoreAccess } from '../data/firestore-access.ts';
 import { firestoreDecisions } from '../data/firestore-decisions.ts';
 import { firestoreHouseholds } from '../data/firestore-households.ts';
 import { firestoreIngredients } from '../data/firestore-ingredients.ts';
+import { firestoreJobs } from '../data/firestore-jobs.ts';
 import { firestoreNotes } from '../data/firestore-notes.ts';
 import { firestoreParsedLines } from '../data/firestore-parsed-lines.ts';
 import { firestoreProductMemory, firestoreVeganLine } from '../data/firestore-product-memory.ts';
@@ -37,9 +38,11 @@ const main = () => {
     productMemory: firestoreProductMemory(db),
     veganLine: firestoreVeganLine(db),
     decisions: firestoreDecisions(db),
+    jobs: firestoreJobs(db),
     claude: createClaude({ send: anthropicSender(new Anthropic({ apiKey: config.anthropicApiKey })), ledger: spend }),
     routines: routinesClient(),
     fillRoutine: config.fillRoutine,
+    researchRoutine: config.researchRoutine,
     routineSecret: config.routineSecret,
     allowedOrigins: config.allowedOrigins,
   });

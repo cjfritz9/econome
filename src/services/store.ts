@@ -74,8 +74,8 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
     return { week, buy, entries, items: buy.map((item) => matchItem(item, memory, byName.get(item.ingredient))) };
   };
 
-  const checkProducts = async (household: Household, products: { productId: string; name: string }[]) => {
-    const [memory, tallies] = await Promise.all([productMemory.list(household.id), veganLine.tallies(household.id)]);
+  const checkProducts = async (householdId: string, products: { productId: string; name: string }[]) => {
+    const [memory, tallies] = await Promise.all([productMemory.list(householdId), veganLine.tallies(householdId)]);
     return inBatches(products, LABEL_PARALLEL, async ({ productId, name }) => ({
       productId,
       name,

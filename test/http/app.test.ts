@@ -9,6 +9,7 @@ import {
   fakeFoodData,
   memoryDecisions,
   memoryIngredients,
+  memoryJobs,
   memoryNotes,
   memoryParsedLines,
   memoryProductMemory,
@@ -83,6 +84,8 @@ const setup = ({ sections = {}, fillRoutine = FILL_ROUTINE }: { sections?: Recor
     productMemory: memoryProductMemory().store,
     veganLine: memoryVeganLine().store,
     decisions: memoryDecisions().store,
+    jobs: memoryJobs().store,
+    researchRoutine: null,
     routines: {
       fire: async (trigger, payload) => {
         fired.push({ trigger, payload });

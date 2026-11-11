@@ -18,10 +18,10 @@ steps:
       - --allow-unauthenticated
       - --min-instances=0
       - --max-instances=2
-      - --timeout=60
+      - --timeout=120
       - --memory=512Mi
       - --set-env-vars=^@^FIREBASE_PROJECT_ID=$PROJECT_ID@LOG_LEVEL=info@ECONOME_ALLOWED_ORIGINS=${_ALLOWED_ORIGINS}
-      - --set-secrets=INSTACART_FILL_CART_ROUTINE_URL=econome-fill-routine-url:latest,INSTACART_FILL_CART_ROUTINE_TOKEN=econome-fill-routine-token:latest,ECONOME_ROUTINE_SECRET=econome-routine-secret:latest,ANTHROPIC_API_KEY=econome-anthropic-api-key:latest,FDC_API_KEY=econome-fdc-api-key:latest
+      - --set-secrets=INSTACART_FILL_CART_ROUTINE_URL=econome-fill-routine-url:latest,INSTACART_FILL_CART_ROUTINE_TOKEN=econome-fill-routine-token:latest,ECONOME_ROUTINE_SECRET=econome-routine-secret:latest,ANTHROPIC_API_KEY=econome-anthropic-api-key:latest,FDC_API_KEY=econome-fdc-api-key:latest,INSTACART_RESEARCH_ROUTINE_URL=econome-research-routine-url:latest,INSTACART_RESEARCH_ROUTINE_TOKEN=econome-research-routine-token:latest
 
 substitutions:
   _IMAGE: us-central1-docker.pkg.dev/${PROJECT_ID}/econome/app

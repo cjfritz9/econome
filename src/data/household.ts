@@ -32,6 +32,13 @@ export const NO_HOUSEHOLD_MESSAGE = 'Set up or join a household in Mise first.';
 export const NOT_A_MEMBER_MESSAGE =
   "Your Mise profile points at a household you're not a member of. Leave it and join again in Mise.";
 
+export const householdOf = (record: HouseholdRecord): Household => ({
+  id: record.id,
+  name: record.name,
+  members: record.members,
+  settings: parseSettings(record.econome),
+});
+
 export const requireHousehold = async (
   households: Pick<Households, 'findUserHouseholdId' | 'findHousehold'>,
   uid: string,
@@ -42,13 +49,7 @@ export const requireHousehold = async (
   const record = await households.findHousehold(householdId);
   if (!record) throw new AccessError(NO_HOUSEHOLD_MESSAGE);
   if (!record.members.includes(uid)) throw new AccessError(NOT_A_MEMBER_MESSAGE);
-
-  return {
-    id: record.id,
-    name: record.name,
-    members: record.members,
-    settings: parseSettings(record.econome),
-  };
+  return householdOf(record);
 };
 
 export interface DailySpend {

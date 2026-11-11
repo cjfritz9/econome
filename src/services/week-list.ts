@@ -72,3 +72,8 @@ export const weekList = async (deps: ListDeps, household: Household, date: strin
   ];
   return { week, planned, list, warnings, entries };
 };
+
+export const buyListFrom = (deps: ListDeps) => async (household: Household, date: string | undefined) => {
+  const { week, list } = await weekList(deps, household, date, { parse: false });
+  return { week: week.id, buy: list.buy };
+};

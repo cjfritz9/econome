@@ -3,22 +3,26 @@ import * as z from 'zod';
 import { chooseWeek } from '../core/calendar.ts';
 import { matchItem } from '../core/instacart-match.ts';
 import type { Decisions } from '../data/decisions.ts';
+import { latestFinds, type Jobs } from '../data/jobs.ts';
 import type { Household } from '../data/household.ts';
-import { setBuying, type Buying } from '../data/ingredients.ts';
+import { idsOf, setBuying, type Buying } from '../data/ingredients.ts';
 import type { ProductMemory, VeganLine } from '../data/product-memory.ts';
 import { emptyWeek, loadWeeks, OnHandSchema } from '../data/weeks.ts';
 import { NotFoundError, RefusedError } from '../services/errors.ts';
+import { loadRecentJobs } from '../services/lookups.ts';
 import { retailerOf, storeService } from '../services/store.ts';
-import { weekList, type ListDeps } from '../services/week-list.ts';
+import { buyListFrom, weekList, type ListDeps } from '../services/week-list.ts';
 import type { FoodData } from '../sources/fdc.ts';
 import { dateParam, jsonBody, productParam, type Env } from './context.ts';
-import { cartView, idsOf, listView, productsView, shopState, weekView } from './views.ts';
+import { cartView, listView, productsView, shopState, weekView } from './views.ts';
 
 export interface ShopDeps extends ListDeps {
   fdc: FoodData;
   productMemory: ProductMemory;
   veganLine: VeganLine;
   decisions: Decisions;
+  jobs: Jobs;
+  now?: () => Date;
 }
 
 const ProductId = z.string().regex(/^\d+$/, 'An Instacart product id');
@@ -38,10 +42,7 @@ const nameOf = (items: { ingredientId: string; ingredient: string }[], id: strin
 export const shopRoutes = (deps: ShopDeps) => {
   const routes = new Hono<Env>();
 
-  const buyList = async (household: Household, date: string | undefined) => {
-    const { week, list } = await weekList(deps, household, date, { parse: false });
-    return { week: week.id, buy: list.buy };
-  };
+  const buyList = buyListFrom(deps);
   const store = (c: Context<Env>) => storeService({ ...deps, buyList }, c.var.uid);
 
   const listFor = async (household: Household, date: string, parse: boolean) => {
@@ -50,10 +51,13 @@ export const shopRoutes = (deps: ShopDeps) => {
     return listView(found, (item) => matchItem(item, memory, entries.get(item.ingredient)));
   };
 
+  const now = deps.now ?? (() => new Date());
+
   const productsFor = async (c: Context<Env>, date: string) => {
     const household = c.var.household;
-    const { buy, items, entries } = await store(c).matchWeek(household, date);
-    return productsView({ week: chooseWeek(household.settings.timezone, date), buy, items, entries }, retailerOf(household));
+    const week = chooseWeek(household.settings.timezone, date);
+    const [{ buy, items, entries }, jobs] = await Promise.all([store(c).matchWeek(household, date), loadRecentJobs(deps.jobs, household.id, now())]);
+    return productsView({ week, buy, items, entries }, retailerOf(household), latestFinds(jobs, week.id, now()), now());
   };
 
   const plannedWeek = async (household: Household, date: string) => {

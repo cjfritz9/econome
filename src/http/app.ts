@@ -11,17 +11,19 @@ import { AccessError, ECONOME_FEATURE, requireFeature, type Access } from '../da
 import { describeHousehold, requireHousehold, type DailySpend, type Households } from '../data/household.ts';
 import { loadWeeks, type Weeks } from '../data/weeks.ts';
 import { logger } from '../logger.ts';
-import { NotFoundError, RefusedError } from '../services/errors.ts';
-import { NothingPlannedError } from '../services/week-list.ts';
+import { NotFoundError, RefusedError, UnavailableError, UpstreamError } from '../services/errors.ts';
+import { lookupService, type LookupDeps } from '../services/lookups.ts';
+import { buyListFrom, NothingPlannedError } from '../services/week-list.ts';
 import type { RoutineTrigger, Routines } from '../sources/routines.ts';
-import { bearerToken, dateParam, type Env } from './context.ts';
+import { bearerToken, dateParam, jsonBody, type Env } from './context.ts';
+import { jobRoutes } from './jobs.ts';
 import { shopRoutes, type ShopDeps } from './shop.ts';
 
 export interface TokenVerifier {
   uidOf: (idToken: string) => Promise<string>;
 }
 
-export interface HttpDeps extends ShopDeps {
+export interface HttpDeps extends ShopDeps, Omit<LookupDeps, 'buyList'> {
   verifier: TokenVerifier;
   access: Access;
   households: Households;
@@ -29,6 +31,7 @@ export interface HttpDeps extends ShopDeps {
   weeks: Weeks;
   routines: Routines;
   fillRoutine: RoutineTrigger | null;
+  researchRoutine: RoutineTrigger | null;
   routineSecret: string | null;
   allowedOrigins: string[];
 }
@@ -46,13 +49,32 @@ const FillResultSchema = z.object({
   error: z.string().nullish(),
 });
 
+const ResearchResultSchema = z.object({
+  job_id: z.string(),
+  results: z
+    .array(
+      z.object({
+        id: z.string().nullish(),
+        store: z.string(),
+        term: z.string(),
+        for: z.string(),
+        products: z.array(z.object({ product_id: z.string().regex(/^\d+$/), name: z.string().min(1), size: z.string().nullish() })),
+      }),
+    )
+    .default([]),
+  unrecognized_stores: z.array(z.string()).default([]),
+  error: z.string().nullish(),
+  done: z.boolean().default(false),
+});
+
 const digest = (text: string) => createHash('sha256').update(text).digest();
 const sameSecret = (given: string, expected: string) => timingSafeEqual(digest(given), digest(expected));
 
 const sameStore = (a: string, b: string) => a.localeCompare(b, 'en', { sensitivity: 'base' }) === 0;
 
-export const createApp = ({ verifier, access, households, spend, routines, fillRoutine, routineSecret, allowedOrigins, ...shop }: HttpDeps) => {
-  const { weeks } = shop;
+export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret, allowedOrigins, ...shop }: HttpDeps) => {
+  const { weeks, households, routines } = shop;
+  const lookups = { ...shop, buyList: buyListFrom(shop) };
   const app = new Hono<Env>();
 
   const signedIn = createMiddleware<Env>(async (c, next) => {
@@ -63,6 +85,13 @@ export const createApp = ({ verifier, access, households, spend, routines, fillR
     await requireFeature(access, uid, ECONOME_FEATURE);
     c.set('uid', uid);
     c.set('household', await requireHousehold(households, uid));
+    await next();
+  });
+
+  const fromRoutine = createMiddleware<Env>(async (c, next) => {
+    if (!routineSecret) throw new HTTPException(503, { message: "Routine results aren't set up on this server." });
+    const given = bearerToken(c.req.header('authorization'));
+    if (!given || !sameSecret(given, routineSecret)) throw new HTTPException(401, { message: 'Unknown sender.' });
     await next();
   });
 
@@ -93,14 +122,10 @@ export const createApp = ({ verifier, access, households, spend, routines, fillR
   });
 
   app.route('/api', shopRoutes(shop));
+  app.route('/api', jobRoutes(lookups));
 
-  app.post('/routines/instacart-fill/result', async (c) => {
-    if (!routineSecret) throw new HTTPException(503, { message: "Routine results aren't set up on this server." });
-    const given = bearerToken(c.req.header('authorization'));
-    if (!given || !sameSecret(given, routineSecret)) throw new HTTPException(401, { message: 'Unknown sender.' });
-    const parsed = FillResultSchema.safeParse(await c.req.json().catch(() => null));
-    if (!parsed.success) throw new HTTPException(400, { message: z.prettifyError(parsed.error) });
-    const result = parsed.data;
+  app.post('/routines/instacart-fill/result', fromRoutine, async (c) => {
+    const result = await jsonBody(c, FillResultSchema);
 
     const target = fillTarget(result.fill_id);
     if (!target) throw new HTTPException(400, { message: "That isn't a fill ID Économe sends." });
@@ -124,11 +149,25 @@ export const createApp = ({ verifier, access, households, spend, routines, fillR
     return c.json({ week: target.week.id, ...compareCart(section.approved.lines, lines) });
   });
 
+  app.post('/routines/instacart-research/result', fromRoutine, async (c) => {
+    const { job_id: jobId, results, unrecognized_stores: unrecognizedStores, error, done } = await jsonBody(c, ResearchResultSchema);
+    const reported = results.map(({ id, store, term, for: forItem, products }) => ({
+      id: id ?? null,
+      store,
+      term,
+      for: forItem,
+      products: products.map(({ product_id, name, size }) => ({ productId: product_id, name, size: size ?? null })),
+    }));
+    return c.json(await lookupService(lookups).record({ jobId, results: reported, unrecognizedStores, error: error ?? null, done }));
+  });
+
   app.onError((error, c) => {
     if (error instanceof HTTPException) return c.json({ error: error.message }, error.status);
     if (error instanceof AccessError) return c.json({ error: error.message }, 403);
     if (error instanceof NotFoundError || error instanceof NothingPlannedError) return c.json({ error: error.message }, 404);
     if (error instanceof RefusedError) return c.json({ error: error.message }, 409);
+    if (error instanceof UpstreamError) return c.json({ error: error.message }, 502);
+    if (error instanceof UnavailableError) return c.json({ error: error.message }, 503);
     logger.error({ err: error, path: c.req.path }, 'Request failed');
     return c.json({ error: 'Something went wrong in Économe.' }, 500);
   });

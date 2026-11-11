@@ -3,6 +3,7 @@ import type { ConcernTally } from '../src/core/vegan.ts';
 import type { Decision, Decisions } from '../src/data/decisions.ts';
 import type { Household } from '../src/data/household.ts';
 import type { IngredientEntry, IngredientRegistry } from '../src/data/ingredients.ts';
+import { RECENT_JOBS, type Jobs } from '../src/data/jobs.ts';
 import type { Note, Notes } from '../src/data/notes.ts';
 import type { ParsedLine, ParsedLines } from '../src/data/parsed-lines.ts';
 import type { ProductMemory, RememberedProduct, VeganLine } from '../src/data/product-memory.ts';
@@ -199,4 +200,31 @@ export const memoryDecisions = () => {
     },
   };
   return { store, recorded };
+};
+
+export const memoryJobs = () => {
+  const stored = new Map<string, Record<string, unknown>>();
+  const key = (householdId: string, jobId: string) => `${householdId}/${jobId}`;
+  const store: Jobs = {
+    recent: async (householdId, since) =>
+      [...stored]
+        .filter(([at, data]) => at.startsWith(`${householdId}/`) && String(data.startedAt) >= since)
+        .sort(([, a], [, b]) => String(b.startedAt).localeCompare(String(a.startedAt)))
+        .slice(0, RECENT_JOBS)
+        .map(([at, data]) => ({ id: at.slice(householdId.length + 1), data })),
+    find: async (householdId, jobId) => {
+      const data = stored.get(key(householdId, jobId));
+      return data && { id: jobId, data };
+    },
+    create: async (householdId, jobId, job) => {
+      stored.set(key(householdId, jobId), structuredClone(job));
+    },
+    update: async (householdId, jobId, { found, ...fields }) => {
+      const current = stored.get(key(householdId, jobId)) ?? {};
+      const changed = Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
+      const merged = found ? { found: { ...(current.found as Record<string, unknown>), ...structuredClone(found) } } : {};
+      stored.set(key(householdId, jobId), { ...current, ...changed, ...merged });
+    },
+  };
+  return { store, stored };
 };
