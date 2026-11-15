@@ -53,6 +53,7 @@ const memoryStore = (entries: Record<string, StoredCatalogEntry> = {}) => {
       runs.push(record);
     },
     recentRuns: async (limit) => runs.slice(-limit).reverse(),
+    findRecipes: async () => [],
   };
   return { store, saved, gone, runs, products: () => products };
 };

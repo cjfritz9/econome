@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import * as z from 'zod';
-import { chooseWeek, weeksEndingWith } from '../core/calendar.ts';
+import { boxCutoff, chooseWeek, householdToday, openBoxWeek, weeksEndingWith } from '../core/calendar.ts';
 import { uniqueLines } from '../core/ingredient-lines.ts';
 import { recipeNutrition } from '../core/nutrition.ts';
 import type { Job } from '../data/jobs.ts';
@@ -13,7 +13,7 @@ import { RefusedError, UnavailableError, UpstreamError } from '../services/error
 import { lookupService, type LookupDeps } from '../services/lookups.ts';
 import { weekList, type ListDeps } from '../services/week-list.ts';
 import { dateParam, jsonBody, type Env } from './context.ts';
-import { jobView, weekView } from './views.ts';
+import { jobView, weekRef, weekView } from './views.ts';
 
 const MAX_MEALS = 60;
 
@@ -87,7 +87,18 @@ export const planRoutes = (deps: PlanDeps) => {
     }
 
     const [saved = { week, ...emptyWeek() }] = await loadWeeks(deps.weeks, household.id, [week]);
-    return c.json({ ...weekView(saved, household), lookup: lookup && jobView(lookup, now()), warnings });
+    return c.json({ ...weekView(saved, household, now()), lookup: lookup && jobView(lookup, now()), warnings });
+  });
+
+  routes.get('/calendar', (c) => {
+    const { timezone, hungryroot: box = {} } = c.var.household.settings;
+    const cutoffDay = box.cutoffDay ?? 'thursday';
+    const openBox = openBoxWeek(timezone, cutoffDay, now());
+    return c.json({
+      today: householdToday(timezone, now()),
+      plan: weekRef(chooseWeek(timezone, undefined, now())),
+      box: { week: weekRef(openBox), cutoff: boxCutoff(openBox, cutoffDay), cutoffDay, cutoffTime: box.cutoffTime ?? null },
+    });
   });
 
   return routes;

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import type { StoredCatalogRecipe } from '../data/hungryroot-catalog.ts';
 import type { HungryrootNutrition, HungryrootProductUse, HungryrootRecipe } from '../sources/hungryroot.ts';
 import { recipeLink } from '../sources/hungryroot.ts';
 
@@ -122,5 +123,29 @@ export const catalogRecipe = (recipe: HungryrootRecipe): CatalogRecipe => {
     },
   };
 };
+
+export const fromCatalog = ({ id, title, servings, steps, nutrition, hungryroot }: StoredCatalogRecipe): HungryrootRecipe => ({
+  id: hungryroot.id,
+  name: title,
+  slug: id,
+  servings,
+  credits: hungryroot.credits,
+  minutes: hungryroot.minutes,
+  nutrition: nutrition
+    ? {
+        kcal: nutrition.kcal ?? null,
+        protein: nutrition.protein ?? null,
+        carbs: nutrition.carbs ?? null,
+        fat: nutrition.fat ?? null,
+        fiber: nutrition.fiber ?? null,
+        sugar: nutrition.sugar ?? null,
+      }
+    : null,
+  tags: [],
+  products: hungryroot.products,
+  steps: steps.map(({ instruction }) => instruction),
+  featured: hungryroot.featured,
+  image: hungryroot.image,
+});
 
 export const recipeHash = (recipe: CatalogRecipe) => createHash('sha256').update(JSON.stringify(recipe)).digest('hex').slice(0, 16);

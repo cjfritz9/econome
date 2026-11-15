@@ -1,7 +1,7 @@
 import { FieldPath, FieldValue, Timestamp, type Firestore, type WriteBatch } from 'firebase-admin/firestore';
 import * as z from 'zod';
 import { logger } from '../logger.ts';
-import type { CatalogRunRecord, HungryrootCatalogStore, StoredCatalogEntry } from './hungryroot-catalog.ts';
+import { StoredCatalogRecipeSchema, type CatalogRunRecord, type HungryrootCatalogStore, type StoredCatalogEntry } from './hungryroot-catalog.ts';
 
 const RECIPES = 'hungryroot-recipes';
 const PAGE = 1_000;
@@ -94,6 +94,12 @@ export const firestoreHungryrootCatalog = (db: Firestore): HungryrootCatalogStor
 
     recordRun: async ({ at, ...record }) => {
       await runs.add({ ...record, at: Timestamp.fromDate(at) });
+    },
+
+    findRecipes: async (ids) => {
+      if (ids.length === 0) return [];
+      const snaps = await db.getAll(...ids.map((id) => recipes.doc(id)));
+      return snaps.filter((snap) => snap.exists).map((snap) => ({ id: snap.id, ...StoredCatalogRecipeSchema.parse(snap.data()) }));
     },
 
     recentRuns: async (limit) => {

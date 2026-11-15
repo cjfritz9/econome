@@ -1,4 +1,4 @@
-import type { CalendarWeek } from '../core/calendar.ts';
+import { boxCutoff, householdToday, type CalendarWeek } from '../core/calendar.ts';
 import { storeCheckoutLink } from '../core/instacart-fill.ts';
 import { compareCart, listHash, type MatchedItem } from '../core/instacart-match.ts';
 import type { ListItem } from '../core/shopping-list.ts';
@@ -27,7 +27,13 @@ export const shopState = ({ meals, instacart }: Pick<PlannedWeek, 'meals' | 'ins
   return 'approved';
 };
 
-export const weekView = (planned: PlannedWeek, household: Household) => {
+const boxState = (planned: PlannedWeek, household: Household, now: Date) => {
+  if (planned.hungryroot.length > 0) return planned.boxLocked ? 'locked' : 'confirmed';
+  const cutoff = boxCutoff(planned.week, household.settings.hungryroot?.cutoffDay);
+  return householdToday(household.settings.timezone, now) > cutoff ? 'missed' : 'open';
+};
+
+export const weekView = (planned: PlannedWeek, household: Household, now: Date) => {
   const targets = { ...household.settings.mealTargets, ...planned.targets };
   const coverage = weekCoverage(planned, household.members.length, targets);
   const hasTargets = Object.keys(targets).length > 0;
@@ -42,8 +48,16 @@ export const weekView = (planned: PlannedWeek, household: Household) => {
       ]),
     ),
     hungryroot: {
-      state: planned.hungryroot.length === 0 ? 'open' : planned.boxLocked ? 'locked' : 'confirmed',
-      recipes: planned.hungryroot.map(({ title, servings }) => ({ title, servings })),
+      state: boxState(planned, household, now),
+      cutoff: boxCutoff(planned.week, household.settings.hungryroot?.cutoffDay),
+      recipes: planned.hungryroot.map(({ slug, hungryrootId, title, servings, removed = [], added = [] }) => ({
+        id: slug ?? null,
+        hungryrootId: hungryrootId ?? null,
+        title,
+        servings,
+        removed,
+        added,
+      })),
     },
     review: { offer: false },
     shop: { state: shopState(planned) },

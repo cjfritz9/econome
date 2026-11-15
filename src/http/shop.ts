@@ -84,7 +84,7 @@ export const shopRoutes = (deps: ShopDeps) => {
     return planned;
   };
 
-  routes.get('/weeks/:date', async (c) => c.json(weekView(await plannedWeek(c.var.household, dateParam(c)), c.var.household)));
+  routes.get('/weeks/:date', async (c) => c.json(weekView(await plannedWeek(c.var.household, dateParam(c)), c.var.household, now())));
 
   routes.get('/weeks/:date/list', async (c) => c.json(await listFor(c.var.household, dateParam(c), true)));
 

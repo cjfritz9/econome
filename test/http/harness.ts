@@ -1,6 +1,7 @@
 import { reviewHash } from '../../src/core/product-check.ts';
 import type { HouseholdRecord, Households } from '../../src/data/household.ts';
-import type { CatalogRunRecord } from '../../src/data/hungryroot-catalog.ts';
+import type { CatalogRunRecord, StoredCatalogRecipe } from '../../src/data/hungryroot-catalog.ts';
+import type { HungryrootRecipeRecord } from '../../src/core/hungryroot-box.ts';
 import { blankMemory, type RememberedProduct } from '../../src/data/product-memory.ts';
 import type { RecipeDoc } from '../../src/data/recipes.ts';
 import { createApp } from '../../src/http/app.ts';
@@ -63,6 +64,7 @@ export const setup = ({
   moreRecipes = [],
   failingLabels = [],
   catalogRuns = [],
+  catalogRecipes = [],
 }: {
   planned?: boolean;
   researchRoutine?: RoutineTrigger | null;
@@ -70,7 +72,9 @@ export const setup = ({
   moreRecipes?: RecipeDoc[];
   failingLabels?: string[];
   catalogRuns?: CatalogRunRecord[];
+  catalogRecipes?: StoredCatalogRecipe[];
 } = {}) => {
+  const boxRecords = new Map<string, HungryrootRecipeRecord>();
   let clock = new Date('2026-11-10T18:00:00.000Z');
   const fired: { trigger: RoutineTrigger; payload: unknown }[] = [];
   const jobs = memoryJobs();
@@ -111,7 +115,16 @@ export const setup = ({
     researchRoutine,
     routineSecret: SECRET,
     allowedOrigins: [],
-    catalog: { recentRuns: async (limit) => catalogRuns.slice(0, limit) },
+    catalog: {
+      recentRuns: async (limit) => catalogRuns.slice(0, limit),
+      findRecipes: async (ids) => catalogRecipes.filter(({ id }) => ids.includes(id)),
+    },
+    hungryrootRecipes: {
+      find: async (_, ids) => ids.flatMap((id) => boxRecords.get(id) ?? []),
+      save: async (_, records) => {
+        for (const record of records) boxRecords.set(record.id, record);
+      },
+    },
     now: () => clock,
   });
 
@@ -134,5 +147,5 @@ export const setup = ({
   const advance = (minutes: number) => {
     clock = new Date(clock.getTime() + minutes * 60 * 1000);
   };
-  return { call, report, advance, fired, jobs, weeks, ingredients, products, decisions, prompts };
+  return { call, report, advance, fired, jobs, weeks, ingredients, products, decisions, prompts, boxRecords };
 };

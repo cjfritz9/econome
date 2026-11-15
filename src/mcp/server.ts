@@ -96,7 +96,7 @@ import { weekList as buildWeekList } from '../services/week-list.ts';
 import { registerStoreTools } from './store-tools.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
-export const SERVER_VERSION = '0.45.0';
+export const SERVER_VERSION = '0.46.0';
 
 export interface ServerDeps {
   access: Access;
@@ -738,6 +738,7 @@ export const createServer = ({
           title: recipe.name,
           servings: recipe.servings * (choice.times ?? 1),
           hungryrootId: recipe.id,
+          slug: recipe.slug,
           ...(choice.removed?.length && { removed: choice.removed }),
           ...(choice.added?.length && { added: choice.added })
         })),

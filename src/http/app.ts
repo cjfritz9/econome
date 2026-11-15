@@ -10,6 +10,7 @@ import { compareCart } from '../core/instacart-match.ts';
 import { AccessError, ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
 import { describeHousehold, requireHousehold, type DailySpend, type Households } from '../data/household.ts';
 import type { HungryrootCatalogStore } from '../data/hungryroot-catalog.ts';
+import type { HungryrootRecipes } from '../data/hungryroot-recipes.ts';
 import { loadWeeks, type Weeks } from '../data/weeks.ts';
 import { logger } from '../logger.ts';
 import { NotFoundError, RefusedError, UnavailableError, UpstreamError } from '../services/errors.ts';
@@ -18,7 +19,7 @@ import { buyListFrom, NothingPlannedError } from '../services/week-list.ts';
 import type { RoutineTrigger, Routines } from '../sources/routines.ts';
 import { bearerToken, dateParam, jsonBody, type Env } from './context.ts';
 import { jobRoutes } from './jobs.ts';
-import { catalogRoutes } from './catalog.ts';
+import { hungryrootRoutes } from './hungryroot.ts';
 import { planRoutes } from './plan.ts';
 import { shopRoutes, type ShopDeps } from './shop.ts';
 
@@ -37,7 +38,8 @@ export interface HttpDeps extends ShopDeps, Omit<LookupDeps, 'buyList'> {
   researchRoutine: RoutineTrigger | null;
   routineSecret: string | null;
   allowedOrigins: string[];
-  catalog: Pick<HungryrootCatalogStore, 'recentRuns'>;
+  catalog: Pick<HungryrootCatalogStore, 'recentRuns' | 'findRecipes'>;
+  hungryrootRecipes: HungryrootRecipes;
 }
 
 const FillResultSchema = z.object({
@@ -77,7 +79,7 @@ const sameSecret = (given: string, expected: string) => timingSafeEqual(digest(g
 
 const sameStore = (a: string, b: string) => a.localeCompare(b, 'en', { sensitivity: 'base' }) === 0;
 
-export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret, allowedOrigins, catalog, ...shop }: HttpDeps) => {
+export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret, allowedOrigins, catalog, hungryrootRecipes, ...shop }: HttpDeps) => {
   const { weeks, households, routines } = shop;
   const lookups = { ...shop, buyList: buyListFrom(shop) };
   const app = new Hono<Env>();
@@ -147,7 +149,7 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
   app.route('/api', shopRoutes(shop));
   app.route('/api', jobRoutes(lookups));
   app.route('/api', planRoutes(lookups));
-  app.route('/api', catalogRoutes(catalog));
+  app.route('/api', hungryrootRoutes({ catalog, hungryrootRecipes, weeks: shop.weeks, ...(shop.now && { now: shop.now }) }));
 
   app.post('/routines/instacart-fill/result', fromRoutine, async (c) => {
     const result = await jsonBody(c, FillResultSchema);

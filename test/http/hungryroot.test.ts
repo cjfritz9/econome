@@ -1,0 +1,143 @@
+import { describe, expect, it } from 'vitest';
+import type { CatalogRunRecord, StoredCatalogRecipe } from '../../src/data/hungryroot-catalog.ts';
+import { DATE, setup, WEEK } from './harness.ts';
+
+const counts = {
+  read: 6542,
+  of: 6542,
+  complete: true,
+  added: 0,
+  updated: 3,
+  unchanged: 6539,
+  back: 0,
+  gone: 1,
+  products: 988,
+  imageHostsLeftOff: [],
+};
+
+const runs: CatalogRunRecord[] = [
+  { at: new Date('2026-12-01T09:00:00Z'), seconds: 150, error: null, counts },
+  { at: new Date('2026-11-01T09:00:00Z'), seconds: 4, error: "Hungryroot's public catalog answered 503.", counts: null },
+];
+
+describe('GET /api/hungryroot/runs', () => {
+  it('lists the catalog copy runs, newest first, failures included', async () => {
+    const { status, body } = await setup({ catalogRuns: runs }).call('GET', '/hungryroot/runs');
+
+    expect(status).toBe(200);
+    expect(body).toEqual({
+      runs: [
+        { at: '2026-12-01T09:00:00.000Z', seconds: 150, ok: true, error: null, counts },
+        { at: '2026-11-01T09:00:00.000Z', seconds: 4, ok: false, error: "Hungryroot's public catalog answered 503.", counts: null },
+      ],
+    });
+  });
+
+  it('takes a limit, and refuses one outside 1 to 24', async () => {
+    const harness = setup({ catalogRuns: runs });
+
+    expect(((await harness.call('GET', '/hungryroot/runs?limit=1')).body.runs as unknown[]).length).toBe(1);
+    expect((await harness.call('GET', '/hungryroot/runs?limit=99')).status).toBe(400);
+  });
+});
+
+const catalogRecipe = (id: string, overrides: Partial<StoredCatalogRecipe['hungryroot']> = {}): StoredCatalogRecipe => ({
+  id,
+  title: `Recipe ${id}`,
+  servings: 2,
+  steps: [{ instruction: 'Cook it' }],
+  nutrition: { kcal: 500, protein: 30, carbs: 40 },
+  hungryroot: { id: 100 + id.length, credits: 9, minutes: 12, featured: true, gone: false, image: null, products: [], ...overrides },
+});
+
+const TIKKA = catalogRecipe('tofu-tikka-1963829');
+const GONE = catalogRecipe('old-bowl-5', { gone: true });
+
+describe('PUT /api/weeks/:date/hungryroot', () => {
+  it("records the household's box from the catalogue, with servings from the record times how often it was added", async () => {
+    const harness = setup({ catalogRecipes: [TIKKA] });
+
+    const { status, body } = await harness.call('PUT', `/weeks/${DATE}/hungryroot`, {
+      recipes: [{ id: TIKKA.id, times: 2, removed: ['Organic Seasoned Jasmine Rice'], added: ['Riced Cauliflower'] }],
+    });
+
+    expect(status).toBe(200);
+    expect(body.hungryroot).toEqual({
+      state: 'confirmed',
+      cutoff: '2026-11-05',
+      recipes: [
+        {
+          id: TIKKA.id,
+          hungryrootId: TIKKA.hungryroot.id,
+          title: TIKKA.title,
+          servings: 4,
+          removed: ['Organic Seasoned Jasmine Rice'],
+          added: ['Riced Cauliflower'],
+        },
+      ],
+    });
+    expect(harness.boxRecords.get(String(TIKKA.hungryroot.id))).toMatchObject({
+      name: TIKKA.title,
+      received: [{ week: WEEK, removed: ['Organic Seasoned Jasmine Rice'], added: ['Riced Cauliflower'] }],
+    });
+  });
+
+  it('keeps the week’s meals, and leaves the box out of the shopping list', async () => {
+    const harness = setup({ catalogRecipes: [TIKKA] });
+
+    const { body } = await harness.call('PUT', `/weeks/${DATE}/hungryroot`, { recipes: [{ id: TIKKA.id }] });
+
+    expect(body.meals).toMatchObject([{ recipeId: 'r1' }]);
+    const list = await harness.call('GET', `/weeks/${DATE}/list`);
+    expect(list.status).toBe(200);
+    expect((list.body.buy as unknown[]).length).toBeGreaterThan(0);
+    expect(JSON.stringify(list.body)).not.toContain(TIKKA.title);
+  });
+
+  it('refuses a recipe that is not in the catalogue, or one Hungryroot dropped, and saves nothing', async () => {
+    const harness = setup({ catalogRecipes: [TIKKA, GONE] });
+
+    const unknown = await harness.call('PUT', `/weeks/${DATE}/hungryroot`, { recipes: [{ id: TIKKA.id }, { id: 'nope-1' }] });
+    const gone = await harness.call('PUT', `/weeks/${DATE}/hungryroot`, { recipes: [{ id: GONE.id }] });
+
+    expect(unknown).toMatchObject({ status: 400, body: { error: "These aren't in the Hungryroot catalogue: nope-1." } });
+    expect(gone).toMatchObject({ status: 400, body: { error: 'Hungryroot no longer offers: Recipe old-bowl-5.' } });
+    expect((await harness.call('GET', `/weeks/${DATE}`)).body.hungryroot).toMatchObject({ state: 'missed', recipes: [] });
+  });
+});
+
+describe('POST /api/weeks/:date/hungryroot/lock', () => {
+  it('locks a confirmed box, and refuses a week with no box', async () => {
+    const harness = setup({ catalogRecipes: [TIKKA] });
+
+    expect((await harness.call('POST', `/weeks/${DATE}/hungryroot/lock`)).status).toBe(409);
+    await harness.call('PUT', `/weeks/${DATE}/hungryroot`, { recipes: [{ id: TIKKA.id }] });
+    const { status, body } = await harness.call('POST', `/weeks/${DATE}/hungryroot/lock`);
+
+    expect(status).toBe(200);
+    expect(body.hungryroot).toMatchObject({ state: 'locked' });
+  });
+});
+
+describe('GET /api/calendar', () => {
+  it("names the week to plan and the box still open, in the household's time zone", async () => {
+    const harness = setup();
+
+    expect((await harness.call('GET', '/calendar')).body).toEqual({
+      today: '2026-11-10',
+      plan: { id: '2026-W47', start: '2026-11-16', end: '2026-11-22' },
+      box: { week: { id: '2026-W47', start: '2026-11-16', end: '2026-11-22' }, cutoff: '2026-11-12', cutoffDay: 'thursday', cutoffTime: null },
+    });
+  });
+
+  it("moves the open box a week on once the coming week's cutoff has passed", async () => {
+    const harness = setup();
+    harness.advance(4 * 24 * 60);
+
+    expect((await harness.call('GET', '/calendar')).body).toMatchObject({
+      today: '2026-11-14',
+      plan: { id: '2026-W47' },
+      box: { week: { id: '2026-W48' }, cutoff: '2026-11-19' },
+    });
+  });
+});

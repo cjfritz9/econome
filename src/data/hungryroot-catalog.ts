@@ -1,3 +1,4 @@
+import * as z from 'zod';
 import type { CatalogRecipe } from '../core/hungryroot-translate.ts';
 import type { HungryrootProduct } from '../sources/hungryroot.ts';
 
@@ -32,6 +33,28 @@ export interface CatalogRunRecord {
   counts: CatalogRun | null;
 }
 
+const Nutrient = z.number().optional();
+
+export const StoredCatalogRecipeSchema = z.object({
+  title: z.string(),
+  servings: z.number(),
+  steps: z.array(z.object({ instruction: z.string() })).default([]),
+  nutrition: z
+    .object({ kcal: Nutrient, protein: Nutrient, carbs: Nutrient, fat: Nutrient, fiber: Nutrient, sugar: Nutrient })
+    .optional(),
+  hungryroot: z.object({
+    id: z.number(),
+    credits: z.number(),
+    minutes: z.number().nullable(),
+    featured: z.boolean(),
+    gone: z.boolean(),
+    image: z.string().nullable(),
+    products: z.array(z.object({ id: z.number(), name: z.string(), brand: z.string().nullable(), amount: z.number(), credits: z.number() })),
+  }),
+});
+
+export type StoredCatalogRecipe = z.infer<typeof StoredCatalogRecipeSchema> & { id: string };
+
 export interface HungryrootCatalogStore {
   entries: () => Promise<Map<string, StoredCatalogEntry>>;
   saveRecipes: (changes: CatalogChange[]) => Promise<void>;
@@ -39,4 +62,5 @@ export interface HungryrootCatalogStore {
   saveProducts: (products: HungryrootProduct[]) => Promise<void>;
   recordRun: (record: CatalogRunRecord) => Promise<void>;
   recentRuns: (limit: number) => Promise<CatalogRunRecord[]>;
+  findRecipes: (ids: string[]) => Promise<StoredCatalogRecipe[]>;
 }

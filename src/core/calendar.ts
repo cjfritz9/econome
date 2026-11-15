@@ -42,9 +42,11 @@ export const chooseWeek = (timeZone: string | undefined, date: string | undefine
 export const weeksEndingWith = (week: CalendarWeek, count: number): CalendarWeek[] =>
   Array.from({ length: count }, (_, back) => weekOf(addDays(week.start, -7 * back)));
 
+export const boxCutoff = (week: CalendarWeek, cutoffDay: Weekday = 'thursday') =>
+  addDays(week.start, Weekday.options.indexOf(cutoffDay) - 7);
+
 export const openBoxWeek = (timeZone: string | undefined, cutoffDay: Weekday = 'thursday', now = new Date()) => {
   const today = householdToday(timeZone, now);
-  const monday = nextMonday(today);
-  const cutoff = addDays(monday, Weekday.options.indexOf(cutoffDay) - 7);
-  return weekOf(today <= cutoff ? monday : addDays(monday, 7));
+  const coming = weekOf(nextMonday(today));
+  return today <= boxCutoff(coming, cutoffDay) ? coming : weekOf(addDays(coming.start, 7));
 };
