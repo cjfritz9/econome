@@ -46,7 +46,7 @@ const catalogRecipe = (id: string, overrides: Partial<StoredCatalogRecipe['hungr
   title: `Recipe ${id}`,
   servings: 2,
   steps: [{ instruction: 'Cook it' }],
-  nutrition: { kcal: 500, protein: 30, carbs: 40 },
+  nutrition: { kcal: 500, protein: 30, carbs: 40, fat: 15 },
   hungryroot: { id: 100 + id.length, credits: 9, minutes: 12, featured: true, gone: false, image: null, products: [], ...overrides },
 });
 
@@ -71,6 +71,7 @@ describe('PUT /api/weeks/:date/hungryroot', () => {
           hungryrootId: TIKKA.hungryroot.id,
           title: TIKKA.title,
           servings: 4,
+          times: 2,
           removed: ['Organic Seasoned Jasmine Rice'],
           added: ['Riced Cauliflower'],
         },
@@ -92,6 +93,32 @@ describe('PUT /api/weeks/:date/hungryroot', () => {
     expect(list.status).toBe(200);
     expect((list.body.buy as unknown[]).length).toBeGreaterThan(0);
     expect(JSON.stringify(list.body)).not.toContain(TIKKA.title);
+  });
+
+  it('sends back each recipe with how often it was added, so the box round-trips unchanged', async () => {
+    const harness = setup({ catalogRecipes: [TIKKA, catalogRecipe('tempeh-bowl-7')] });
+    await harness.call('PUT', `/weeks/${DATE}/hungryroot`, { recipes: [{ id: TIKKA.id, times: 2 }] });
+
+    const { recipes } = (await harness.call('GET', `/weeks/${DATE}`)).body.hungryroot as { recipes: { id: string; times: number }[] };
+    const resent = await harness.call('PUT', `/weeks/${DATE}/hungryroot`, {
+      recipes: [...recipes.map(({ id, times }) => ({ id, times })), { id: 'tempeh-bowl-7' }],
+    });
+
+    expect(resent.body.hungryroot).toMatchObject({
+      recipes: [
+        { id: TIKKA.id, servings: 4, times: 2 },
+        { id: 'tempeh-bowl-7', servings: 2, times: 1 },
+      ],
+    });
+  });
+
+  it('refuses the same recipe listed twice, since times says how often it was added', async () => {
+    const { status, body } = await setup({ catalogRecipes: [TIKKA] }).call('PUT', `/weeks/${DATE}/hungryroot`, {
+      recipes: [{ id: TIKKA.id }, { id: TIKKA.id }],
+    });
+
+    expect(status).toBe(400);
+    expect(body.error).toBe(`List each recipe once, with times for how often it was added: ${TIKKA.id}.`);
   });
 
   it('refuses a recipe that is not in the catalogue, or one Hungryroot dropped, and saves nothing', async () => {
@@ -138,6 +165,23 @@ describe('GET /api/calendar', () => {
       today: '2026-11-14',
       plan: { id: '2026-W47' },
       box: { week: { id: '2026-W48' }, cutoff: '2026-11-19' },
+    });
+  });
+});
+
+describe('GET /api/weeks/:date/hungryroot/suggestions', () => {
+  it("answers with the week's box suggestions by catalogue id", async () => {
+    const { status, body } = await setup({ catalogRecipes: [TIKKA] }).call('GET', `/weeks/${DATE}/hungryroot/suggestions`);
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({
+      week: { id: WEEK },
+      boxServings: 12,
+      chosenServings: 0,
+      wanted: 3,
+      directive: 'directives/general.md',
+      rankedBy: 'protein',
+      suggestions: [{ id: TIKKA.id, times: 2, servings: 4 }],
     });
   });
 });

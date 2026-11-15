@@ -38,7 +38,7 @@ export interface HttpDeps extends ShopDeps, Omit<LookupDeps, 'buyList'> {
   researchRoutine: RoutineTrigger | null;
   routineSecret: string | null;
   allowedOrigins: string[];
-  catalog: Pick<HungryrootCatalogStore, 'recentRuns' | 'findRecipes'>;
+  catalog: Pick<HungryrootCatalogStore, 'recentRuns' | 'findRecipes' | 'allRecipes' | 'allProducts'>;
   hungryrootRecipes: HungryrootRecipes;
 }
 
@@ -149,7 +149,10 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
   app.route('/api', shopRoutes(shop));
   app.route('/api', jobRoutes(lookups));
   app.route('/api', planRoutes(lookups));
-  app.route('/api', hungryrootRoutes({ catalog, hungryrootRecipes, weeks: shop.weeks, ...(shop.now && { now: shop.now }) }));
+  app.route(
+    '/api',
+    hungryrootRoutes({ catalog, hungryrootRecipes, weeks: shop.weeks, notes: shop.notes, claude: shop.claude, ...(shop.now && { now: shop.now }) }),
+  );
 
   app.post('/routines/instacart-fill/result', fromRoutine, async (c) => {
     const result = await jsonBody(c, FillResultSchema);

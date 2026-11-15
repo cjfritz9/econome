@@ -2,6 +2,21 @@ import * as z from 'zod';
 import type { CatalogRecipe } from '../core/hungryroot-translate.ts';
 import type { HungryrootProduct } from '../sources/hungryroot.ts';
 
+const MaybeNumber = z.number().nullable();
+
+export const StoredProductSchema = z.object({
+  id: z.number(),
+  name: z.string(),
+  brand: z.string().nullable(),
+  credits: z.number(),
+  category: z.string().nullable(),
+  servings: MaybeNumber,
+  servingSize: z.string().nullable().default(null),
+  perServing: z.object({ kcal: MaybeNumber, protein: MaybeNumber, carbs: MaybeNumber }).nullable(),
+  ingredients: z.string().nullable().default(null),
+  dietaryTags: z.array(z.string()).default([]),
+});
+
 export interface StoredCatalogEntry {
   hash: string;
   gone: boolean;
@@ -63,4 +78,6 @@ export interface HungryrootCatalogStore {
   recordRun: (record: CatalogRunRecord) => Promise<void>;
   recentRuns: (limit: number) => Promise<CatalogRunRecord[]>;
   findRecipes: (ids: string[]) => Promise<StoredCatalogRecipe[]>;
+  allRecipes: () => Promise<StoredCatalogRecipe[]>;
+  allProducts: () => Promise<HungryrootProduct[]>;
 }

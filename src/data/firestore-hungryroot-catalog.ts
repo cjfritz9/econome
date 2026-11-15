@@ -1,12 +1,32 @@
 import { FieldPath, FieldValue, Timestamp, type Firestore, type WriteBatch } from 'firebase-admin/firestore';
 import * as z from 'zod';
 import { logger } from '../logger.ts';
-import { StoredCatalogRecipeSchema, type CatalogRunRecord, type HungryrootCatalogStore, type StoredCatalogEntry } from './hungryroot-catalog.ts';
+import {
+  StoredCatalogRecipeSchema,
+  StoredProductSchema,
+  type CatalogRunRecord,
+  type HungryrootCatalogStore,
+  type StoredCatalogEntry,
+  type StoredCatalogRecipe,
+} from './hungryroot-catalog.ts';
 
 const RECIPES = 'hungryroot-recipes';
 const PAGE = 1_000;
 const MAX_PAGES = 20;
 const BATCH = 400;
+const PRODUCT_LIMIT = 3_000;
+const RANKING_FIELDS = [
+  'title',
+  'servings',
+  'nutrition',
+  'hungryroot.id',
+  'hungryroot.credits',
+  'hungryroot.minutes',
+  'hungryroot.featured',
+  'hungryroot.gone',
+  'hungryroot.image',
+  'hungryroot.products',
+];
 
 const CountsSchema = z.object({
   read: z.number(),
@@ -94,6 +114,25 @@ export const firestoreHungryrootCatalog = (db: Firestore): HungryrootCatalogStor
 
     recordRun: async ({ at, ...record }) => {
       await runs.add({ ...record, at: Timestamp.fromDate(at) });
+    },
+
+    allRecipes: async () => {
+      const found: StoredCatalogRecipe[] = [];
+      let after: string | undefined;
+      for (let page = 0; page < MAX_PAGES; page += 1) {
+        const query = recipes.orderBy(FieldPath.documentId()).select(...RANKING_FIELDS).limit(PAGE);
+        const snap = await (after ? query.startAfter(after) : query).get();
+        found.push(...snap.docs.map((doc) => ({ id: doc.id, ...StoredCatalogRecipeSchema.parse(doc.data()) })));
+        if (snap.size < PAGE) return found;
+        after = snap.docs.at(-1)?.id;
+      }
+      logger.warn({ read: found.length }, 'The Hungryroot catalog hit its read limit; some recipes were not ranked');
+      return found;
+    },
+
+    allProducts: async () => {
+      const snap = await home.collection('products').limit(PRODUCT_LIMIT).get();
+      return snap.docs.map((doc) => StoredProductSchema.parse(doc.data()));
     },
 
     findRecipes: async (ids) => {

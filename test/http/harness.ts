@@ -118,6 +118,8 @@ export const setup = ({
     catalog: {
       recentRuns: async (limit) => catalogRuns.slice(0, limit),
       findRecipes: async (ids) => catalogRecipes.filter(({ id }) => ids.includes(id)),
+      allRecipes: async () => catalogRecipes,
+      allProducts: async () => [],
     },
     hungryrootRecipes: {
       find: async (_, ids) => ids.flatMap((id) => boxRecords.get(id) ?? []),

@@ -50,11 +50,12 @@ export const weekView = (planned: PlannedWeek, household: Household, now: Date) 
     hungryroot: {
       state: boxState(planned, household, now),
       cutoff: boxCutoff(planned.week, household.settings.hungryroot?.cutoffDay),
-      recipes: planned.hungryroot.map(({ slug, hungryrootId, title, servings, removed = [], added = [] }) => ({
+      recipes: planned.hungryroot.map(({ slug, hungryrootId, title, servings, times, removed = [], added = [] }) => ({
         id: slug ?? null,
         hungryrootId: hungryrootId ?? null,
         title,
         servings,
+        times: times ?? null,
         removed,
         added,
       })),

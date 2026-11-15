@@ -35,6 +35,7 @@ const HungryrootMealSchema = z.object({
   slot: MealSlot.optional(),
   hungryrootId: z.number().optional(),
   slug: z.string().optional(),
+  times: z.number().int().min(1).optional(),
   removed: z.array(z.string()).optional(),
   added: z.array(z.string()).optional(),
 });
