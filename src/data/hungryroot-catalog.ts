@@ -25,10 +25,18 @@ export interface CatalogRun {
   imageHostsLeftOff: string[];
 }
 
+export interface CatalogRunRecord {
+  at: Date;
+  seconds: number;
+  error: string | null;
+  counts: CatalogRun | null;
+}
+
 export interface HungryrootCatalogStore {
   entries: () => Promise<Map<string, StoredCatalogEntry>>;
   saveRecipes: (changes: CatalogChange[]) => Promise<void>;
   markGone: (ids: string[]) => Promise<void>;
   saveProducts: (products: HungryrootProduct[]) => Promise<void>;
-  saveRun: (run: CatalogRun) => Promise<void>;
+  recordRun: (record: CatalogRunRecord) => Promise<void>;
+  recentRuns: (limit: number) => Promise<CatalogRunRecord[]>;
 }

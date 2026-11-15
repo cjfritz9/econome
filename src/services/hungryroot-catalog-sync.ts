@@ -10,13 +10,15 @@ const hostOf = (url: string) => {
   }
 };
 
-export const syncHungryrootCatalog = async ({
-  source,
-  store,
-}: {
+const ERROR_LENGTH = 500;
+
+interface SyncDeps {
   source: Pick<HungryrootCatalog, 'everyVeganRecipe' | 'products'>;
   store: HungryrootCatalogStore;
-}): Promise<CatalogRun> => {
+  now?: () => Date;
+}
+
+const copyCatalog = async ({ source, store }: SyncDeps): Promise<CatalogRun> => {
   const { count, recipes } = await source.everyVeganRecipe();
   const products = await source.products();
   const stored = await store.entries();
@@ -47,7 +49,7 @@ export const syncHungryrootCatalog = async ({
   await store.markGone(gone);
   await store.saveProducts(products);
 
-  const run: CatalogRun = {
+  return {
     read: seen.size,
     of: count,
     complete,
@@ -59,6 +61,19 @@ export const syncHungryrootCatalog = async ({
     products: products.length,
     imageHostsLeftOff: [...imageHostsLeftOff].sort(),
   };
-  await store.saveRun(run);
-  return run;
+};
+
+export const syncHungryrootCatalog = async (deps: SyncDeps): Promise<CatalogRun> => {
+  const now = deps.now ?? (() => new Date());
+  const at = now();
+  const seconds = () => Math.round((now().getTime() - at.getTime()) / 1000);
+  try {
+    const counts = await copyCatalog(deps);
+    await deps.store.recordRun({ at, seconds: seconds(), error: null, counts });
+    return counts;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await deps.store.recordRun({ at, seconds: seconds(), error: message.slice(0, ERROR_LENGTH), counts: null });
+    throw error;
+  }
 };

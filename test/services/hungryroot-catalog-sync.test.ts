@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { catalogRecipe, recipeHash } from '../../src/core/hungryroot-translate.ts';
-import type { CatalogChange, CatalogRun, HungryrootCatalogStore, StoredCatalogEntry } from '../../src/data/hungryroot-catalog.ts';
+import type { CatalogChange, CatalogRunRecord, HungryrootCatalogStore, StoredCatalogEntry } from '../../src/data/hungryroot-catalog.ts';
 import { syncHungryrootCatalog } from '../../src/services/hungryroot-catalog-sync.ts';
 import type { HungryrootProduct, HungryrootRecipe } from '../../src/sources/hungryroot.ts';
 
@@ -36,7 +36,7 @@ const PRODUCT: HungryrootProduct = {
 const memoryStore = (entries: Record<string, StoredCatalogEntry> = {}) => {
   const saved: CatalogChange[] = [];
   const gone: string[] = [];
-  const runs: CatalogRun[] = [];
+  const runs: CatalogRunRecord[] = [];
   let products: HungryrootProduct[] = [];
   const store: HungryrootCatalogStore = {
     entries: async () => new Map(Object.entries(entries)),
@@ -49,9 +49,10 @@ const memoryStore = (entries: Record<string, StoredCatalogEntry> = {}) => {
     saveProducts: async (list) => {
       products = list;
     },
-    saveRun: async (run) => {
-      runs.push(run);
+    recordRun: async (record) => {
+      runs.push(record);
     },
+    recentRuns: async (limit) => runs.slice(-limit).reverse(),
   };
   return { store, saved, gone, runs, products: () => products };
 };
@@ -79,7 +80,29 @@ describe('syncHungryrootCatalog', () => {
     ]);
     expect(memory.products()).toEqual([PRODUCT]);
     expect(run).toMatchObject({ read: 3, of: 3, complete: true, added: 1, updated: 1, unchanged: 1, gone: 0, back: 0, products: 1 });
-    expect(memory.runs).toEqual([run]);
+  });
+
+  it('records each run with when it started and how long it took', async () => {
+    const memory = memoryStore();
+    const times = [new Date('2026-12-01T09:00:00Z'), new Date('2026-12-01T09:02:30Z')];
+
+    const run = await syncHungryrootCatalog({ source: source([recipe(1)]), store: memory.store, now: () => times.shift() ?? new Date(0) });
+
+    expect(memory.runs).toEqual([{ at: new Date('2026-12-01T09:00:00Z'), seconds: 150, error: null, counts: run }]);
+  });
+
+  it('records a failed pull with what went wrong, writes nothing, and still fails', async () => {
+    const memory = memoryStore();
+    const failing = {
+      everyVeganRecipe: async () => Promise.reject(new Error("Hungryroot's public catalog answered 503.")),
+      products: async () => [PRODUCT],
+    };
+
+    await expect(syncHungryrootCatalog({ source: failing, store: memory.store })).rejects.toThrow('answered 503');
+
+    expect(memory.saved).toEqual([]);
+    expect(memory.products()).toEqual([]);
+    expect(memory.runs).toMatchObject([{ error: "Hungryroot's public catalog answered 503.", counts: null }]);
   });
 
   it('marks recipes Hungryroot dropped as gone, and rewrites one that came back', async () => {

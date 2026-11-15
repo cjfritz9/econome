@@ -95,6 +95,7 @@ const setup = ({ sections = {}, fillRoutine = FILL_ROUTINE }: { sections?: Recor
     fillRoutine,
     routineSecret: SECRET,
     allowedOrigins: [MISE],
+    catalog: { recentRuns: async () => [] },
   });
   return { app, saved, fired };
 };

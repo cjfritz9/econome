@@ -5,6 +5,7 @@ import { connectFirebase } from '../data/firebase.ts';
 import { firestoreAccess } from '../data/firestore-access.ts';
 import { firestoreDecisions } from '../data/firestore-decisions.ts';
 import { firestoreHouseholds } from '../data/firestore-households.ts';
+import { firestoreHungryrootCatalog } from '../data/firestore-hungryroot-catalog.ts';
 import { firestoreIngredients } from '../data/firestore-ingredients.ts';
 import { firestoreJobs } from '../data/firestore-jobs.ts';
 import { firestoreNotes } from '../data/firestore-notes.ts';
@@ -45,6 +46,7 @@ const main = () => {
     researchRoutine: config.researchRoutine,
     routineSecret: config.routineSecret,
     allowedOrigins: config.allowedOrigins,
+    catalog: firestoreHungryrootCatalog(db),
   });
   serve({ fetch: app.fetch, port: config.port }, ({ port }) => logger.info({ port }, 'Économe HTTP server ready'));
 };

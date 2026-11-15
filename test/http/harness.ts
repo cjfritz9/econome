@@ -1,5 +1,6 @@
 import { reviewHash } from '../../src/core/product-check.ts';
 import type { HouseholdRecord, Households } from '../../src/data/household.ts';
+import type { CatalogRunRecord } from '../../src/data/hungryroot-catalog.ts';
 import { blankMemory, type RememberedProduct } from '../../src/data/product-memory.ts';
 import type { RecipeDoc } from '../../src/data/recipes.ts';
 import { createApp } from '../../src/http/app.ts';
@@ -61,12 +62,14 @@ export const setup = ({
   branded = {},
   moreRecipes = [],
   failingLabels = [],
+  catalogRuns = [],
 }: {
   planned?: boolean;
   researchRoutine?: RoutineTrigger | null;
   branded?: Record<string, BrandedFood[]>;
   moreRecipes?: RecipeDoc[];
   failingLabels?: string[];
+  catalogRuns?: CatalogRunRecord[];
 } = {}) => {
   let clock = new Date('2026-11-10T18:00:00.000Z');
   const fired: { trigger: RoutineTrigger; payload: unknown }[] = [];
@@ -108,6 +111,7 @@ export const setup = ({
     researchRoutine,
     routineSecret: SECRET,
     allowedOrigins: [],
+    catalog: { recentRuns: async (limit) => catalogRuns.slice(0, limit) },
     now: () => clock,
   });
 

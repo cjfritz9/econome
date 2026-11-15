@@ -1,12 +1,32 @@
 import { FieldPath, FieldValue, Timestamp, type Firestore, type WriteBatch } from 'firebase-admin/firestore';
 import * as z from 'zod';
 import { logger } from '../logger.ts';
-import type { HungryrootCatalogStore, StoredCatalogEntry } from './hungryroot-catalog.ts';
+import type { CatalogRunRecord, HungryrootCatalogStore, StoredCatalogEntry } from './hungryroot-catalog.ts';
 
 const RECIPES = 'hungryroot-recipes';
 const PAGE = 1_000;
 const MAX_PAGES = 20;
 const BATCH = 400;
+
+const CountsSchema = z.object({
+  read: z.number(),
+  of: z.number(),
+  complete: z.boolean(),
+  added: z.number(),
+  updated: z.number(),
+  unchanged: z.number(),
+  back: z.number(),
+  gone: z.number(),
+  products: z.number(),
+  imageHostsLeftOff: z.array(z.string()),
+});
+
+const RunSchema = z.object({
+  at: z.instanceof(Timestamp).transform((at) => at.toDate()),
+  seconds: z.number(),
+  error: z.string().nullable(),
+  counts: CountsSchema.nullable(),
+});
 
 const EntrySchema = z.object({
   hungryroot: z.object({ hash: z.string().default(''), gone: z.boolean().default(false) }).optional(),
@@ -15,6 +35,7 @@ const EntrySchema = z.object({
 export const firestoreHungryrootCatalog = (db: Firestore): HungryrootCatalogStore => {
   const recipes = db.collection(RECIPES);
   const home = db.doc('econome/hungryroot');
+  const runs = home.collection('runs');
 
   const inBatches = async <T>(items: T[], write: (batch: WriteBatch, item: T) => void) => {
     for (let start = 0; start < items.length; start += BATCH) {
@@ -71,8 +92,13 @@ export const firestoreHungryrootCatalog = (db: Firestore): HungryrootCatalogStor
       );
     },
 
-    saveRun: async (run) => {
-      await home.set({ lastRun: { ...run, at: Timestamp.now() } }, { merge: true });
+    recordRun: async ({ at, ...record }) => {
+      await runs.add({ ...record, at: Timestamp.fromDate(at) });
+    },
+
+    recentRuns: async (limit) => {
+      const snap = await runs.orderBy('at', 'desc').limit(limit).get();
+      return snap.docs.map((doc): CatalogRunRecord => RunSchema.parse(doc.data()));
     },
   };
 };

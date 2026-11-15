@@ -96,7 +96,7 @@ import { weekList as buildWeekList } from '../services/week-list.ts';
 import { registerStoreTools } from './store-tools.ts';
 import { jsonResult, WeekDate } from './shared.ts';
 
-export const SERVER_VERSION = '0.44.0';
+export const SERVER_VERSION = '0.45.0';
 
 export interface ServerDeps {
   access: Access;
