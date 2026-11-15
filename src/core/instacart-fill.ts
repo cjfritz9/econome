@@ -26,11 +26,6 @@ export const checkoutLink = (reported: string | null | undefined) => {
 
 export const storeCheckoutLink = (storeId: string) => `https://${CHECKOUT_HOST}/store/checkout_v4?sid=${storeId}`;
 
-export const simulatedCart = (lines: CartLine[]) => {
-  const names = new Map(lines.map(({ productId, name }) => [productId, name ?? null]));
-  return connectorItems(lines).map(({ product_id, quantity }) => ({ productId: product_id, quantity, name: names.get(product_id) ?? null }));
-};
-
 export const fillRequest = (fillId: string, retailer: string, lines: CartLine[]) => ({
   fill_id: fillId,
   carts: [{ retailer, items: connectorItems(lines) }],

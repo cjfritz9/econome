@@ -49,10 +49,6 @@ export const SettingsSchema = z.object({
         .regex(/^\d+$/, "Instacart's store id, digits only")
         .optional()
         .describe("Instacart's id for the household's own store location, the sid in its checkout link (instacart.com/store/checkout_v4?sid=…), so Mise links straight to that store's cart"),
-      fills: z
-        .enum(['routine', 'simulated'])
-        .optional()
-        .describe("How Mise fills the cart: routine (the default) fires Claude's fill routine; simulated, for a test household, records the approved lines as filled without touching Instacart"),
     })
     .optional(),
   planningDirective: NotePath.refine((path) => path.startsWith('directives/'), 'A planning directive is a note under directives/')
