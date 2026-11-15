@@ -5,7 +5,7 @@ import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
 import * as z from 'zod';
 import { chooseWeek } from '../core/calendar.ts';
-import { checkoutLink, fillRequest, fillTarget, newFillId } from '../core/instacart-fill.ts';
+import { checkoutLink, fillRequest, fillTarget, newFillId, simulatedCart, storeCheckoutLink } from '../core/instacart-fill.ts';
 import { compareCart } from '../core/instacart-match.ts';
 import { AccessError, ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
 import { describeHousehold, requireHousehold, type DailySpend, type Households } from '../data/household.ts';
@@ -123,8 +123,9 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
   app.get('/api/household', async (c) => c.json(await describeHousehold(c.var.household, households, spend)));
 
   app.post('/api/weeks/:date/instacart/fill', async (c) => {
-    if (!fillRoutine) throw new HTTPException(503, { message: "The fill routine isn't set up on this server." });
     const household = c.var.household;
+    const simulated = household.settings.instacart?.fills === 'simulated';
+    if (!fillRoutine && !simulated) throw new HTTPException(503, { message: "The fill routine isn't set up on this server." });
     const week = chooseWeek(household.settings.timezone, dateParam(c));
     const [planned] = await loadWeeks(weeks, household.id, [week]);
     const section = planned?.instacart;
@@ -133,6 +134,15 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     if (!retailer) throw new HTTPException(409, { message: 'No Instacart store is set for this household.' });
 
     const fillId = newFillId(household.id, week);
+    if (simulated || !fillRoutine) {
+      const storeId = household.settings.instacart?.storeId;
+      await weeks.saveInstacart(household.id, week.id, {
+        ...section,
+        sent: { fillId, sessionId: 'simulated', by: c.var.uid, error: null },
+        filled: { by: c.var.uid, lines: simulatedCart(section.approved.lines), fillId, checkoutUrl: storeId ? storeCheckoutLink(storeId) : null },
+      });
+      return c.json({ week: week.id, fillId, run: null, simulated: true }, 202);
+    }
     const run = await routines.fire(fillRoutine, fillRequest(fillId, retailer, section.approved.lines)).catch((error: unknown) => {
       logger.error({ err: error, week: week.id }, 'The fill routine would not start');
       throw new HTTPException(502, { message: "Claude's fill routine wouldn't start. Try again in a minute." });

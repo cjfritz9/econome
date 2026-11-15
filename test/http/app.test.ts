@@ -27,12 +27,12 @@ const home: HouseholdRecord = {
   econome: { timezone: 'America/New_York', instacart: { retailer: 'Wegmans' } },
 };
 
-const households: Households = {
+const householdsWith = (record: HouseholdRecord): Households => ({
   findUserHouseholdId: async (uid) => ({ uid1: 'h1', uid2: 'h1', uid3: 'h1' })[uid],
-  findHousehold: async (id) => (id === 'h1' ? home : undefined),
+  findHousehold: async (id) => (id === 'h1' ? record : undefined),
   findMemberProfiles: async (uids) => uids.map((uid) => ({ uid, name: `Member ${uid}` })),
   updateSettings: async () => undefined,
-};
+});
 
 const access: Access = { featuresOf: async (uid) => (uid === 'uid2' ? [] : ['econome']) };
 
@@ -50,7 +50,12 @@ const approved = (): InstacartSection => ({
   },
 });
 
-const setup = ({ sections = {}, fillRoutine = FILL_ROUTINE }: { sections?: Record<string, InstacartSection>; fillRoutine?: RoutineTrigger | null } = {}) => {
+const setup = ({
+  sections = {},
+  fillRoutine = FILL_ROUTINE,
+  household = home,
+}: { sections?: Record<string, InstacartSection>; fillRoutine?: RoutineTrigger | null; household?: HouseholdRecord } = {}) => {
+  const households = householdsWith(household);
   const saved = new Map<string, InstacartSection>(Object.entries(sections));
   const fired: Array<{ trigger: RoutineTrigger; payload: unknown }> = [];
   const weeks: Weeks = {
@@ -208,6 +213,29 @@ describe('starting a fill', () => {
       },
     ]);
     expect(saved.get('h1/2026-W46')?.sent).toEqual({ fillId: body.fillId, sessionId: 'cse_1', by: 'uid1', error: null });
+  });
+
+  it("simulates the fill for a test household: no routine, the approved lines as the cart, and the store's checkout link", async () => {
+    const test = { ...home, econome: { timezone: 'America/New_York', instacart: { retailer: 'Wegmans', storeId: '1234', fills: 'simulated' } } };
+    const { app, saved, fired } = setup({ sections: { 'h1/2026-W46': approved() }, fillRoutine: null, household: test });
+
+    const response = await fill(app);
+
+    expect(response.status).toBe(202);
+    const body = (await response.json()) as { fillId: string };
+    expect(body).toEqual({ week: '2026-W46', fillId: expect.stringMatching(/^h1\.2026-11-09\./), run: null, simulated: true });
+    expect(fired).toEqual([]);
+    expect(saved.get('h1/2026-W46')).toMatchObject({
+      sent: { fillId: body.fillId, sessionId: 'simulated', by: 'uid1', error: null },
+      filled: {
+        fillId: body.fillId,
+        lines: [
+          { productId: '111', quantity: 2, name: 'Organic Extra Firm Tofu' },
+          { productId: '222', quantity: 2, name: 'Lemons' },
+        ],
+        checkoutUrl: 'https://www.instacart.com/store/checkout_v4?sid=1234',
+      },
+    });
   });
 
   it("refuses a week that isn't approved, without starting anything", async () => {
