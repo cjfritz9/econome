@@ -10,6 +10,8 @@ const pairing = (id: number, overrides: Record<string, unknown> = {}) => ({
   cooking_time: 10,
   nutrition: { calories: 440, protein: '30.00', total_carb: '62.00', total_fat: '11.00', fiber: '10.00', sugars: null },
   tags: [25, 999],
+  is_featured: true,
+  featured_img_url: `https://img.example/${id}.jpg`,
   short_instruction_html: '<p>Cube the tofu.</p><p>Sauté 2&ndash;3 min.</p>',
   ingredients: [{ id: 7, name: 'Organic Extra Firm Tofu', brand_name: 'Hodo Soy', amount: 2.0, points: '3.00' }],
   ...overrides,
@@ -64,7 +66,32 @@ describe('hungryrootCatalog', () => {
       tags: ['High protein'],
       products: [{ id: 7, name: 'Organic Extra Firm Tofu', brand: 'Hodo Soy', amount: 2, credits: 3 }],
       steps: ['Cube the tofu.', 'Sauté 2–3 min.'],
+      featured: true,
+      image: 'https://img.example/1.jpg',
     });
+  });
+
+  it('reads every vegan recipe of every size, featured or not, one page at a time', async () => {
+    const { fetchJson, urls } = fakeFetch(pairingPages(1_200));
+    const { count, recipes } = await hungryrootCatalog('1', fetchJson, 0).everyVeganRecipe();
+
+    expect(count).toBe(1_200);
+    expect(recipes).toHaveLength(1_200);
+    expect(urls.map((url) => url.searchParams.get('offset'))).toEqual(['0', '500', '1000']);
+    for (const url of urls) {
+      expect(url.searchParams.get('is_vegan')).toBe('1');
+      expect(['servings', 'is_featured', 'nutrition_tags'].filter((name) => url.searchParams.has(name))).toEqual([]);
+    }
+  });
+
+  it('reports a recipe Hungryroot leaves off its site as not featured, with no image when it has none', async () => {
+    const { fetchJson } = fakeFetch(() => ({
+      count: 1,
+      results: { pairings: [pairing(1, { is_featured: false, featured_img_url: null })], tags: [] },
+    }));
+    const [recipe] = (await hungryrootCatalog('1', fetchJson, 0).everyVeganRecipe()).recipes;
+
+    expect(recipe).toMatchObject({ featured: false, image: null });
   });
 
   it('leaves out the high-protein filter unless asked', async () => {
@@ -95,7 +122,9 @@ describe('hungryrootCatalog', () => {
           points: '3.00',
           primary_category_name: 'Produce',
           servings: 3,
-          nutrition: { calories: 100, protein: '11.00', total_carb: '8.00' },
+          nutrition: { calories: 100, protein: '11.00', total_carb: '8.00', serving_size_text: '1 cup (85g)' },
+          ingredients_html: '<p>Edamame (soybeans)</p>',
+          dietary_tags: ['Vegan', 'Gluten-Free'],
         },
       ],
     }));
@@ -108,7 +137,10 @@ describe('hungryrootCatalog', () => {
         credits: 3,
         category: 'Produce',
         servings: 3,
+        servingSize: '1 cup (85g)',
         perServing: { kcal: 100, protein: 11, carbs: 8 },
+        ingredients: 'Edamame (soybeans)',
+        dietaryTags: ['Vegan', 'Gluten-Free'],
       },
     ]);
   });

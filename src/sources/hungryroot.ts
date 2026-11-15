@@ -33,6 +33,8 @@ export interface HungryrootRecipe {
   tags: string[];
   products: HungryrootProductUse[];
   steps: string[];
+  featured: boolean;
+  image: string | null;
 }
 
 export interface HungryrootProduct {
@@ -42,11 +44,20 @@ export interface HungryrootProduct {
   credits: number;
   category: string | null;
   servings: number | null;
+  servingSize: string | null;
   perServing: { kcal: number | null; protein: number | null; carbs: number | null } | null;
+  ingredients: string | null;
+  dietaryTags: string[];
+}
+
+export interface EveryVeganRecipe {
+  count: number;
+  recipes: HungryrootRecipe[];
 }
 
 export interface HungryrootCatalog {
   veganRecipes: (servings: number, options?: { highProtein?: boolean }) => Promise<HungryrootRecipe[]>;
+  everyVeganRecipe: () => Promise<EveryVeganRecipe>;
   products: () => Promise<HungryrootProduct[]>;
 }
 
@@ -62,6 +73,7 @@ const ENTITIES: Record<string, string> = {
   frac14: '¼',
   frac12: '½',
   frac34: '¾',
+  frac13: '⅓',
   deg: '°',
   eacute: 'é',
   egrave: 'è',
@@ -109,6 +121,8 @@ const PairingSchema = z.object({
   cooking_time: z.number().nullish(),
   nutrition: NutritionSchema.nullish(),
   tags: z.array(z.number()).default([]),
+  is_featured: z.boolean().nullish(),
+  featured_img_url: z.string().nullish(),
   short_instruction_html: z.string().nullish(),
   ingredients: z
     .array(z.object({ id: z.number(), name: z.string(), brand_name: z.string().nullish(), amount: Amount, points: Amount }))
@@ -133,7 +147,11 @@ const ProductPageSchema = z.object({
       points: Amount,
       primary_category_name: z.string().nullish(),
       servings: z.number().nullish(),
-      nutrition: z.object({ calories: MaybeAmount, protein: MaybeAmount, total_carb: MaybeAmount }).nullish(),
+      nutrition: z
+        .object({ calories: MaybeAmount, protein: MaybeAmount, total_carb: MaybeAmount, serving_size_text: z.string().nullish() })
+        .nullish(),
+      ingredients_html: z.string().nullish(),
+      dietary_tags: z.array(z.string()).nullish(),
     }),
   ),
 });
@@ -164,9 +182,13 @@ const toRecipe = (pairing: z.infer<typeof PairingSchema>, tagNames: Map<number, 
     credits: points,
   })),
   steps: stepsFrom(pairing.short_instruction_html),
+  featured: pairing.is_featured ?? false,
+  image: pairing.featured_img_url ?? null,
 });
 
-export const hungryrootCatalog = (version: string, fetchJson: typeof fetch = fetch): HungryrootCatalog => {
+const pause = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+export const hungryrootCatalog = (version: string, fetchJson: typeof fetch = fetch, pauseMs = 3_000): HungryrootCatalog => {
   const get = async (path: string, params: Record<string, string | number>): Promise<unknown> => {
     const query = new URLSearchParams(Object.entries(params).map(([key, value]) => [key, String(value)]));
     const response = await fetchJson(`${API}${path}?${query}`, {
@@ -191,36 +213,47 @@ export const hungryrootCatalog = (version: string, fetchJson: typeof fetch = fet
   const recipes = new Map<string, Promise<HungryrootRecipe[]>>();
   let products: Promise<HungryrootProduct[]> | undefined;
 
+  const recipePage = async (offset: number, filters: Record<string, string | number>) => {
+    const page = PairingPageSchema.parse(
+      await get('/public_pairings/', { is_vegan: 1, ...filters, sideload: 'tags', limit: PAGE_SIZE, offset }),
+    );
+    const tagNames = new Map(page.results.tags.map(({ id, name }) => [id, name]));
+    return { count: page.count, items: page.results.pairings.map((pairing) => toRecipe(pairing, tagNames)) };
+  };
+
   const loadRecipes = (servings: number, highProtein: boolean) =>
-    allPages(async (offset) => {
-      const page = PairingPageSchema.parse(
-        await get('/public_pairings/', {
-          is_vegan: 1,
-          servings,
-          is_featured: 1,
-          sideload: 'tags',
-          limit: PAGE_SIZE,
-          offset,
-          ...(highProtein && { nutrition_tags: HIGH_PROTEIN_TAG }),
-        }),
-      );
-      const tagNames = new Map(page.results.tags.map(({ id, name }) => [id, name]));
-      return { count: page.count, items: page.results.pairings.map((pairing) => toRecipe(pairing, tagNames)) };
-    });
+    allPages((offset) =>
+      recipePage(offset, { servings, is_featured: 1, ...(highProtein && { nutrition_tags: HIGH_PROTEIN_TAG }) }),
+    );
+
+  const everyVeganRecipe = async (): Promise<EveryVeganRecipe> => {
+    const first = await recipePage(0, {});
+    const recipes = [...first.items];
+    for (let offset = PAGE_SIZE; offset < first.count; offset += PAGE_SIZE) {
+      await pause(pauseMs);
+      recipes.push(...(await recipePage(offset, {})).items);
+    }
+    return { count: first.count, recipes };
+  };
 
   const loadProducts = () =>
     allPages(async (offset) => {
       const page = ProductPageSchema.parse(await get('/public_products/', { limit: PAGE_SIZE, offset }));
       return {
         count: page.count,
-        items: page.results.map(({ id, name, brand_name, points, primary_category_name, servings, nutrition }) => ({
-          id,
-          name,
-          brand: brand_name ?? null,
-          credits: points,
-          category: primary_category_name ?? null,
-          servings: servings ?? null,
-          perServing: nutrition ? { kcal: nutrition.calories, protein: nutrition.protein, carbs: nutrition.total_carb } : null,
+        items: page.results.map((product) => ({
+          id: product.id,
+          name: product.name,
+          brand: product.brand_name ?? null,
+          credits: product.points,
+          category: product.primary_category_name ?? null,
+          servings: product.servings ?? null,
+          servingSize: product.nutrition?.serving_size_text ?? null,
+          perServing: product.nutrition
+            ? { kcal: product.nutrition.calories, protein: product.nutrition.protein, carbs: product.nutrition.total_carb }
+            : null,
+          ingredients: product.ingredients_html ? stepsFrom(product.ingredients_html).join(' ') || null : null,
+          dietaryTags: product.dietary_tags ?? [],
         })),
       };
     });
@@ -240,6 +273,7 @@ export const hungryrootCatalog = (version: string, fetchJson: typeof fetch = fet
       recipes.set(key, loading);
       return loading;
     },
+    everyVeganRecipe,
     products: () => {
       products ??= remembered(loadProducts, () => {
         products = undefined;

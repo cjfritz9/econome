@@ -9,7 +9,10 @@ const product = (id: number, name: string, category: string, carbs: number, serv
   credits: 2,
   category,
   servings,
+  servingSize: null,
   perServing: { kcal: 100, protein: 2, carbs },
+  ingredients: null,
+  dietaryTags: [],
 });
 
 const RICE = product(1, 'Brown Rice Quinoa Blend', 'Grains + Pastas', 41, 2);
@@ -33,6 +36,8 @@ const recipe = (
   tags: [],
   products: uses.map((use) => ({ id: use.id, name: use.name, brand: null, amount: servings / 2, credits: 2 })),
   steps: ['Cube the tofu.'],
+  featured: true,
+  image: null,
 });
 
 describe('sameName', () => {
