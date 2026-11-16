@@ -1,5 +1,6 @@
 import { storedSuggestions } from '../src/data/suggestions.ts';
 import { markedAgain, type HungryrootUnavailable, type UnavailableRecipe } from '../src/data/hungryroot-unavailable.ts';
+import { missedAgain, type InstacartNotAdded, type NotAdded } from '../src/data/instacart-not-added.ts';
 import { lineKey } from '../src/core/ingredient-lines.ts';
 import type { ConcernTally } from '../src/core/vegan.ts';
 import type { Decision, Decisions } from '../src/data/decisions.ts';
@@ -246,6 +247,18 @@ export const memoryUnavailable = (initial: UnavailableRecipe[] = []) => {
     },
     clear: async (_householdId, ids) => {
       for (const id of ids) records.delete(id);
+    },
+  };
+  return { store, records };
+};
+
+export const memoryNotAdded = (initial: NotAdded[] = []) => {
+  const records = new Map(initial.map((record) => [record.productId, record]));
+  const store: InstacartNotAdded = {
+    list: async () => [...records.values()],
+    record: async (_householdId, { week, at, missed, landed }) => {
+      for (const miss of missed) records.set(miss.productId, missedAgain(records.get(miss.productId), miss, week, at));
+      for (const productId of landed) records.delete(productId);
     },
   };
   return { store, records };

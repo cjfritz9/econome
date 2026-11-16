@@ -17,7 +17,6 @@ export interface LookupDeps extends StoreDeps {
   households: Pick<Households, 'findHousehold'>;
   routines: Routines;
   researchRoutine: RoutineTrigger | null;
-  now?: () => Date;
 }
 
 export interface ReportedSearch {

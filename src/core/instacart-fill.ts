@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import * as z from 'zod';
-import type { CartLine } from '../data/weeks.ts';
+import type { CartLine, InCart, SentItem } from '../data/weeks.ts';
 import { weekOf, type CalendarWeek } from './calendar.ts';
 import { connectorItems } from './instacart-match.ts';
 
@@ -26,7 +26,23 @@ export const checkoutLink = (reported: string | null | undefined) => {
 
 export const storeCheckoutLink = (storeId: string) => `https://${CHECKOUT_HOST}/store/checkout_v4?sid=${storeId}`;
 
-export const fillRequest = (fillId: string, retailer: string, lines: CartLine[]) => ({
+export const fillRequest = (fillId: string, retailer: string, items: SentItem[]) => ({
   fill_id: fillId,
-  carts: [{ retailer, items: connectorItems(lines) }],
+  carts: [{ retailer, items: connectorItems(items) }],
 });
+
+export interface ConnectorWords {
+  summary: string | null;
+  itemErrors: { productId: string; message: string }[];
+}
+
+export const fillOutcome = (sent: SentItem[], inCart: InCart[], approved: CartLine[], { summary, itemErrors }: ConnectorWords) => {
+  const has = new Map(inCart.map(({ productId, quantity }) => [productId, quantity]));
+  const nameOf = new Map(approved.map(({ productId, name, ingredient }) => [productId, name ?? ingredient]));
+  const errorOf = new Map(itemErrors.map(({ productId, message }) => [productId, message]));
+  const short = sent.filter(({ productId, quantity }) => (has.get(productId) ?? 0) < quantity);
+  return {
+    missed: short.map(({ productId }) => ({ productId, name: nameOf.get(productId) ?? null, said: errorOf.get(productId) ?? summary })),
+    landed: sent.filter((item) => !short.includes(item)).map(({ productId }) => productId),
+  };
+};

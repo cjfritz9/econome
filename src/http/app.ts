@@ -1,18 +1,19 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { cors } from 'hono/cors';
 import { createMiddleware } from 'hono/factory';
 import { HTTPException } from 'hono/http-exception';
 import * as z from 'zod';
 import { chooseWeek } from '../core/calendar.ts';
-import { checkoutLink, fillRequest, fillTarget, newFillId } from '../core/instacart-fill.ts';
-import { compareCart } from '../core/instacart-match.ts';
+import { checkoutLink, fillOutcome, fillRequest, fillTarget, newFillId } from '../core/instacart-fill.ts';
+import { combinedLines, compareCart, shortOf } from '../core/instacart-match.ts';
 import { AccessError, ECONOME_FEATURE, requireFeature, type Access } from '../data/access.ts';
 import { describeHousehold, requireHousehold, type DailySpend, type Households } from '../data/household.ts';
 import type { HungryrootCatalogStore } from '../data/hungryroot-catalog.ts';
 import type { HungryrootRecipes } from '../data/hungryroot-recipes.ts';
 import type { HungryrootUnavailable } from '../data/hungryroot-unavailable.ts';
-import { loadWeeks, type Weeks } from '../data/weeks.ts';
+import type { InstacartNotAdded } from '../data/instacart-not-added.ts';
+import { checkoutsOf, loadWeeks, type ApprovedCart, type InstacartSection, type RunKind, type SentItem, type Weeks } from '../data/weeks.ts';
 import { logger } from '../logger.ts';
 import { NotFoundError, RefusedError, UnavailableError, UpstreamError } from '../services/errors.ts';
 import { lookupService, type LookupDeps } from '../services/lookups.ts';
@@ -42,7 +43,13 @@ export interface HttpDeps extends ShopDeps, Omit<LookupDeps, 'buyList'> {
   catalog: Pick<HungryrootCatalogStore, 'recentRuns' | 'findRecipes' | 'allRecipes' | 'allProducts'>;
   hungryrootRecipes: HungryrootRecipes;
   unavailable: HungryrootUnavailable;
+  notAdded: InstacartNotAdded;
 }
+
+const SAID_LENGTH = 500;
+const said = (text: string | null | undefined) => text?.trim().slice(0, SAID_LENGTH) || null;
+
+const FillBody = z.object({ only: z.literal('missing').optional() }).nullable();
 
 const FillResultSchema = z.object({
   fill_id: z.string(),
@@ -52,6 +59,11 @@ const FillResultSchema = z.object({
         retailer: z.string(),
         checkout_url: z.string().nullish(),
         lines: z.array(z.object({ product_id: z.string().regex(/^\d+$/), name: z.string().nullish(), quantity: z.number().positive() })),
+        summary: z.string().nullish().transform(said),
+        item_errors: z
+          .array(z.object({ product_id: z.string(), message: z.string().transform(said) }))
+          .nullish()
+          .transform((errors) => errors ?? []),
       }),
     )
     .default([]),
@@ -82,7 +94,8 @@ const sameSecret = (given: string, expected: string) => timingSafeEqual(digest(g
 const sameStore = (a: string, b: string) => a.localeCompare(b, 'en', { sensitivity: 'base' }) === 0;
 
 export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret, allowedOrigins, catalog, hungryrootRecipes, unavailable, ...shop }: HttpDeps) => {
-  const { weeks, households, routines } = shop;
+  const { weeks, households, routines, notAdded } = shop;
+  const now = shop.now ?? (() => new Date());
   const lookups = { ...shop, buyList: buyListFrom(shop) };
   const app = new Hono<Env>();
 
@@ -129,7 +142,7 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
 
   app.get('/api/household', async (c) => c.json(await describeHousehold(c.var.household, households, spend)));
 
-  app.post('/api/weeks/:date/instacart/fill', async (c) => {
+  const startRun = async (c: Context<Env>, kind: RunKind, itemsOf: (section: InstacartSection & { approved: ApprovedCart }) => SentItem[]) => {
     if (!fillRoutine) throw new HTTPException(503, { message: "The fill routine isn't set up on this server." });
     const household = c.var.household;
     const week = chooseWeek(household.settings.timezone, dateParam(c));
@@ -138,15 +151,31 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     if (!section?.approved) throw new HTTPException(409, { message: `${week.id}'s Instacart cart isn't approved yet.` });
     const retailer = section.retailer ?? household.settings.instacart?.retailer;
     if (!retailer) throw new HTTPException(409, { message: 'No Instacart store is set for this household.' });
+    const items = itemsOf({ ...section, approved: section.approved });
 
     const fillId = newFillId(household.id, week);
-    const run = await routines.fire(fillRoutine, fillRequest(fillId, retailer, section.approved.lines)).catch((error: unknown) => {
-      logger.error({ err: error, week: week.id }, 'The fill routine would not start');
-      throw new HTTPException(502, { message: "Claude's fill routine wouldn't start. Try again in a minute." });
+    const run = await routines.fire(fillRoutine, fillRequest(fillId, retailer, items)).catch((error: unknown) => {
+      logger.error({ err: error, week: week.id, kind }, 'The fill routine would not start');
+      throw new HTTPException(502, { message: "Claude's cart routine wouldn't start. Try again in a minute." });
     });
-    await weeks.saveInstacart(household.id, week.id, { ...section, sent: { fillId, sessionId: run.sessionId, by: c.var.uid, error: null }, filled: null });
-    return c.json({ week: week.id, fillId, run: run.sessionUrl }, 202);
+    const sent = { fillId, sessionId: run.sessionId, by: c.var.uid, error: null, kind, items };
+    const saved = kind === 'fill' ? { ...section, sent, filled: null, checkedOut: null, checkouts: checkoutsOf(section) } : { ...section, sent };
+    await weeks.saveInstacart(household.id, week.id, saved);
+    return c.json({ week: week.id, kind, fillId, items: items.length, run: run.sessionUrl }, 202);
+  };
+
+  app.post('/api/weeks/:date/instacart/fill', async (c) => {
+    const only = (await jsonBody(c, FillBody))?.only;
+    return startRun(c, 'fill', ({ approved, filled }) => {
+      if (!only) return combinedLines(approved.lines);
+      if (!filled) throw new RefusedError("Économe hasn't read this cart yet, so it can't tell what's missing. Check the cart first.");
+      const short = shortOf(approved.lines, filled.lines);
+      if (short.length === 0) throw new RefusedError("Nothing approved is missing from the cart as Économe last read it. Check the cart again if it's changed since.");
+      return short;
+    });
   });
+
+  app.post('/api/weeks/:date/instacart/check', async (c) => startRun(c, 'check', () => []));
 
   app.route('/api', shopRoutes(shop));
   app.route('/api', jobRoutes(lookups));
@@ -185,8 +214,17 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     const cart = result.carts.find((reported) => retailer && sameStore(reported.retailer, retailer)) ?? (result.carts.length === 1 ? result.carts[0] : undefined);
     if (!cart) throw new HTTPException(400, { message: `The result has no cart for ${retailer ?? "the week's store"}.` });
     const lines = cart.lines.map(({ product_id, name, quantity }) => ({ productId: product_id, quantity, name: name ?? null }));
-    const filled = { by: sent.by, lines, fillId: result.fill_id, checkoutUrl: checkoutLink(cart.checkout_url) };
+    const at = now().toISOString();
+    const filled = { by: sent.by, lines, fillId: result.fill_id, checkoutUrl: checkoutLink(cart.checkout_url), kind: sent.kind, at };
     await weeks.saveInstacart(target.householdId, target.week.id, { ...section, filled });
+
+    if (sent.kind === 'fill') {
+      const words = { summary: cart.summary, itemErrors: cart.item_errors.flatMap(({ product_id, message }) => (message ? [{ productId: product_id, message }] : [])) };
+      const outcome = fillOutcome(sent.items ?? combinedLines(section.approved.lines), lines, section.approved.lines, words);
+      await notAdded.record(target.householdId, { week: target.week.id, at, ...outcome }).catch((error: unknown) => {
+        logger.error({ err: error, week: target.week.id, missed: outcome.missed.length }, "Couldn't record which products Instacart didn't add");
+      });
+    }
     return c.json({ week: target.week.id, ...compareCart(section.approved.lines, lines) });
   });
 

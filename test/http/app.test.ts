@@ -10,6 +10,7 @@ import {
   memoryDecisions,
   memoryIngredients,
   memoryJobs,
+  memoryNotAdded,
   memoryNotes,
   memoryParsedLines,
   memoryProductMemory,
@@ -52,6 +53,7 @@ const approved = (): InstacartSection => ({
 
 const setup = ({ sections = {}, fillRoutine = FILL_ROUTINE }: { sections?: Record<string, InstacartSection>; fillRoutine?: RoutineTrigger | null } = {}) => {
   const saved = new Map<string, InstacartSection>(Object.entries(sections));
+  const notAdded = memoryNotAdded();
   const fired: Array<{ trigger: RoutineTrigger; payload: unknown }> = [];
   const weeks: Weeks = {
     findWeekDocs: async (householdId, weekIds) =>
@@ -100,8 +102,10 @@ const setup = ({ sections = {}, fillRoutine = FILL_ROUTINE }: { sections?: Recor
     catalog: { recentRuns: async () => [], findRecipes: async () => [], allRecipes: async () => [], allProducts: async () => [] },
     hungryrootRecipes: { find: async () => [], save: async () => undefined },
     unavailable: { list: async () => [], mark: async () => Promise.reject(new Error('not used')), clear: async () => undefined },
+    notAdded: notAdded.store,
+    now: () => new Date('2026-11-10T18:00:00.000Z'),
   });
-  return { app, saved, fired };
+  return { app, saved, fired, notAdded };
 };
 
 const signedIn = (token: string, init: RequestInit = {}) => ({ ...init, headers: { Authorization: `Bearer ${token}` } });
@@ -202,7 +206,7 @@ describe('starting a fill', () => {
 
     expect(response.status).toBe(202);
     const body = (await response.json()) as { fillId: string };
-    expect(body).toEqual({ week: '2026-W46', fillId: expect.stringMatching(/^h1\.2026-11-09\./), run: 'https://claude.example.com/code/cse_1' });
+    expect(body).toEqual({ week: '2026-W46', kind: 'fill', fillId: expect.stringMatching(/^h1\.2026-11-09\./), items: 2, run: 'https://claude.example.com/code/cse_1' });
     expect(fired).toEqual([
       {
         trigger: FILL_ROUTINE,
@@ -212,7 +216,36 @@ describe('starting a fill', () => {
         },
       },
     ]);
-    expect(saved.get('h1/2026-W46')?.sent).toEqual({ fillId: body.fillId, sessionId: 'cse_1', by: 'uid1', error: null });
+    expect(saved.get('h1/2026-W46')?.sent).toEqual({
+      fillId: body.fillId,
+      sessionId: 'cse_1',
+      by: 'uid1',
+      error: null,
+      kind: 'fill',
+      items: [
+        { productId: '111', quantity: 2 },
+        { productId: '222', quantity: 2 },
+      ],
+    });
+  });
+
+  it("starts a new cart: a fill clears the week's checkout mark but keeps it in the checkouts, even one recorded before there was a history", async () => {
+    const { app, saved } = setup({ sections: { 'h1/2026-W46': { ...approved(), checkedOut: { by: 'uid1' } } } });
+
+    await fill(app);
+
+    expect(saved.get('h1/2026-W46')).toMatchObject({ checkedOut: null, checkouts: [{ by: 'uid1', at: null }] });
+  });
+
+  it('checks the cart by sending the routine nothing to change, keeping the last read and the checkout mark until the new read arrives', async () => {
+    const filled = { by: 'uid1', lines: [{ productId: '111', quantity: 2, name: null }], fillId: null, checkoutUrl: null, kind: 'fill' as const, at: null };
+    const { app, saved, fired } = setup({ sections: { 'h1/2026-W46': { ...approved(), filled, checkedOut: { by: 'uid1' } } } });
+
+    const response = await app.request('/api/weeks/2026-11-11/instacart/check', signedIn('token-1', { method: 'POST' }));
+
+    expect(response.status).toBe(202);
+    expect(fired[0]?.payload).toMatchObject({ carts: [{ retailer: 'Wegmans', items: [] }] });
+    expect(saved.get('h1/2026-W46')).toMatchObject({ filled, checkedOut: { by: 'uid1' }, sent: { kind: 'check', items: [] } });
   });
 
   it("refuses a week that isn't approved, without starting anything", async () => {
@@ -232,7 +265,10 @@ describe('starting a fill', () => {
 });
 
 describe("receiving a fill's result", () => {
-  const sentWeek = (fillId: string): InstacartSection => ({ ...approved(), sent: { fillId, sessionId: 'cse_1', by: 'uid1', error: null } });
+  const sentWeek = (fillId: string, kind: 'fill' | 'check' = 'fill'): InstacartSection => ({
+    ...approved(),
+    sent: { fillId, sessionId: 'cse_1', by: 'uid1', error: null, kind, items: null },
+  });
   const FILL_ID = 'h1.2026-11-09.0f8fad5b-d9cb-469f-a165-70867728950e';
   const cart = (lines: Array<{ product_id: string; quantity: number; name?: string }>) => ({ fill_id: FILL_ID, carts: [{ retailer: 'wegmans', lines }], error: null });
 
@@ -260,7 +296,40 @@ describe("receiving a fill's result", () => {
         { productId: '333', quantity: 1, name: 'Cucumber' },
       ],
       checkoutUrl: null,
+      kind: 'fill',
+      at: '2026-11-10T18:00:00.000Z',
     });
+  });
+
+  it("counts each product a fill sent that didn't land, with Instacart's own words for it when it gives them", async () => {
+    const { app, notAdded } = setup({ sections: { 'h1/2026-W46': sentWeek(FILL_ID) } });
+    const reported = {
+      ...cart([{ product_id: '111', quantity: 1 }]),
+      carts: [
+        {
+          retailer: 'Wegmans',
+          lines: [{ product_id: '111', quantity: 1 }],
+          summary: '  Cart updated (added 1 item).  ',
+          item_errors: [{ product_id: '222', message: 'Out of stock' }],
+        },
+      ],
+    };
+
+    expect((await app.request('/routines/instacart-fill/result', fromRoutine(reported))).status).toBe(200);
+
+    expect([...notAdded.records.values()]).toEqual([
+      { productId: '111', name: 'Organic Extra Firm Tofu', times: 1, firstAt: '2026-11-10T18:00:00.000Z', lastAt: '2026-11-10T18:00:00.000Z', lastWeek: '2026-W46', said: 'Cart updated (added 1 item).' },
+      { productId: '222', name: 'Lemons', times: 1, firstAt: '2026-11-10T18:00:00.000Z', lastAt: '2026-11-10T18:00:00.000Z', lastWeek: '2026-W46', said: 'Out of stock' },
+    ]);
+  });
+
+  it("records a check's read as a check, and counts nothing from it", async () => {
+    const { app, saved, notAdded } = setup({ sections: { 'h1/2026-W46': sentWeek(FILL_ID, 'check') } });
+
+    expect((await app.request('/routines/instacart-fill/result', fromRoutine(cart([])))).status).toBe(200);
+
+    expect(saved.get('h1/2026-W46')?.filled).toMatchObject({ kind: 'check', lines: [] });
+    expect(notAdded.records.size).toBe(0);
   });
 
   it("keeps the cart's checkout link, without Instacart's tracking, and ignores any other address", async () => {

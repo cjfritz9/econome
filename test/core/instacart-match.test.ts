@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cartLines, compareCart, listHash, matchItem } from '../../src/core/instacart-match.ts';
+import { cartLines, combinedLines, compareCart, connectorItems, listHash, matchItem, shortOf } from '../../src/core/instacart-match.ts';
 import type { ListItem } from '../../src/core/shopping-list.ts';
 import { blankMemory, type RememberedProduct } from '../../src/data/product-memory.ts';
 import { entry } from '../fakes.ts';
@@ -129,5 +129,47 @@ describe('compareCart', () => {
       differs: [{ productId: '18165406', wanted: 3, inCart: 2, for: ['Wegmans Organic Extra Firm Tofu', 'Wegmans Organic Extra Firm Tofu'] }],
       extra: [{ productId: '999', quantity: 1, name: 'Cucumber' }],
     });
+  });
+});
+
+describe('combinedLines', () => {
+  it("combines lines sharing a product, since the connector's cart tool sets quantities rather than adding", () => {
+    const lines = [
+      { ingredient: 'extra-firm tofu', productId: '111', quantity: 1, name: null },
+      { ingredient: 'firm tofu', productId: '111', quantity: 2, name: null },
+      { ingredient: 'lemon', productId: '222', quantity: 1, name: null },
+    ];
+
+    expect(combinedLines(lines)).toEqual([
+      { productId: '111', quantity: 3 },
+      { productId: '222', quantity: 1 },
+    ]);
+    expect(connectorItems(combinedLines(lines))).toEqual([
+      { product_id: '111', quantity: 3 },
+      { product_id: '222', quantity: 1 },
+    ]);
+  });
+});
+
+describe('shortOf', () => {
+  const approved = [
+    { ingredient: 'extra-firm tofu', productId: '111', quantity: 2, name: null },
+    { ingredient: 'lemon', productId: '222', quantity: 2, name: null },
+    { ingredient: 'dill', productId: '333', quantity: 1, name: null },
+    { ingredient: 'mint', productId: '444', quantity: 1, name: null },
+  ];
+
+  it('gives the approved amount of every product missing or short, and leaves alone what has more than approved or is extra', () => {
+    const inCart = [
+      { productId: '111', quantity: 3, name: null },
+      { productId: '222', quantity: 1, name: null },
+      { productId: '444', quantity: 1, name: null },
+      { productId: '999', quantity: 1, name: 'Cucumber' },
+    ];
+
+    expect(shortOf(approved, inCart)).toEqual([
+      { productId: '333', quantity: 1 },
+      { productId: '222', quantity: 2 },
+    ]);
   });
 });

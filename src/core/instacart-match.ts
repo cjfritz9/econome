@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { IngredientEntry } from '../data/ingredients.ts';
 import { forIngredient, productRecord, type RememberedProduct } from '../data/product-memory.ts';
-import type { CartLine, InCart } from '../data/weeks.ts';
+import type { CartLine, InCart, SentItem } from '../data/weeks.ts';
 import { packagesCovering, packagesFor } from './packages.ts';
 import type { ListItem } from './shopping-list.ts';
 import type { Verdict } from './vegan.ts';
@@ -107,8 +107,18 @@ export const compareCart = (approved: CartLine[], inCart: InCart[]) => {
   return { matches: missing.length === 0 && differs.length === 0, missing, differs, extra };
 };
 
-export const connectorItems = (lines: CartLine[]) => {
+export const combinedLines = (lines: CartLine[]): SentItem[] => {
   const totals = new Map<string, number>();
   for (const { productId, quantity } of lines) totals.set(productId, (totals.get(productId) ?? 0) + quantity);
-  return [...totals].map(([productId, quantity]) => ({ product_id: productId, quantity }));
+  return [...totals].map(([productId, quantity]) => ({ productId, quantity }));
+};
+
+export const connectorItems = (items: SentItem[]) => items.map(({ productId, quantity }) => ({ product_id: productId, quantity }));
+
+export const shortOf = (approved: CartLine[], inCart: InCart[]): SentItem[] => {
+  const { missing, differs } = compareCart(approved, inCart);
+  return [
+    ...missing.map(({ productId, quantity }) => ({ productId, quantity })),
+    ...differs.filter(({ wanted, inCart: has }) => has < wanted).map(({ productId, wanted }) => ({ productId, quantity: wanted })),
+  ];
 };

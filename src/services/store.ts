@@ -1,5 +1,5 @@
 import { chooseWeek } from '../core/calendar.ts';
-import { cartLines, compareCart, connectorItems, listHash, matchItem } from '../core/instacart-match.ts';
+import { cartLines, combinedLines, compareCart, connectorItems, listHash, matchItem } from '../core/instacart-match.ts';
 import { bestLabel, checkProduct, labelQuery, reviewHash } from '../core/product-check.ts';
 import type { ListItem } from '../core/shopping-list.ts';
 import { concernsToCount } from '../core/vegan.ts';
@@ -17,7 +17,7 @@ import {
   type VeganLine,
 } from '../data/product-memory.ts';
 import type { ParsedLines } from '../data/parsed-lines.ts';
-import { loadWeeks, type InCart, type Weeks } from '../data/weeks.ts';
+import { checkoutsOf, loadWeeks, type InCart, type Weeks } from '../data/weeks.ts';
 import type { FoodData } from '../sources/fdc.ts';
 import { logger } from '../logger.ts';
 import { NotFoundError, RefusedError } from './errors.ts';
@@ -41,6 +41,7 @@ export interface StoreDeps {
   decisions: Decisions;
   weeks: Weeks;
   buyList: (household: Household, date: string | undefined) => Promise<{ week: string; buy: ListItem[] }>;
+  now?: () => Date;
 }
 
 export interface Choice {
@@ -83,7 +84,7 @@ export const retailerOf = (household: Household) => {
   return retailer;
 };
 
-export const storeService = ({ fdc, productMemory, veganLine, ingredients, parsedLines, decisions, weeks, buyList }: StoreDeps, by: string) => {
+export const storeService = ({ fdc, productMemory, veganLine, ingredients, parsedLines, decisions, weeks, buyList, now = () => new Date() }: StoreDeps, by: string) => {
   const labelFor = async (name: string) => bestLabel(name, await fdc.branded(labelQuery(name)));
 
   const knownIngredient = async (householdId: string, ingredient: string) => {
@@ -221,7 +222,7 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
 
   const approve = async (household: Household, date: string | undefined, quantities?: Record<string, number>) => {
     const retailer = retailerOf(household);
-    const { week } = await weekSection(household, date);
+    const { week, section } = await weekSection(household, date);
     const { buy, items } = await matchWeek(household, date);
     const { lines, notInCart, needQuantity } = cartLines(items, quantities);
     if (needQuantity.length > 0) throw new RefusedError(`Say how many to buy of: ${needQuantity.join(', ')}, then approve again.`);
@@ -236,14 +237,15 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
       sent: null,
       filled: null,
       checkedOut: null,
+      checkouts: checkoutsOf(section),
     });
-    return { week: week.id, retailer, lines, notInCart, connector: { retailer_name: retailer, item_updates: connectorItems(lines) } };
+    return { week: week.id, retailer, lines, notInCart, connector: { retailer_name: retailer, item_updates: connectorItems(combinedLines(lines)) } };
   };
 
   const recordCart = async (household: Household, date: string | undefined, items: InCart[], checkoutUrl: string | null = null) => {
     const { week, section } = await weekSection(household, date);
     if (!section.approved) throw new RefusedError(`${week.id}'s Instacart cart isn't approved yet; approve it first.`);
-    await weeks.saveInstacart(household.id, week.id, { ...section, filled: { by, lines: items, fillId: null, checkoutUrl } });
+    await weeks.saveInstacart(household.id, week.id, { ...section, filled: { by, lines: items, fillId: null, checkoutUrl, kind: 'fill', at: now().toISOString() } });
     const { buy } = await buyList(household, date);
     return {
       week: week.id,
@@ -254,7 +256,9 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
 
   const markCheckedOut = async (household: Household, date: string | undefined) => {
     const { week, section } = await weekSection(household, date);
-    await weeks.saveInstacart(household.id, week.id, { ...section, checkedOut: { by } });
+    if (!section.checkedOut) {
+      await weeks.saveInstacart(household.id, week.id, { ...section, checkedOut: { by }, checkouts: [...checkoutsOf(section), { by, at: now().toISOString() }] });
+    }
     return { week: week.id, checkedOut: true };
   };
 

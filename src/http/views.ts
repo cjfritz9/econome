@@ -4,8 +4,9 @@ import { compareCart, listHash, type MatchedItem } from '../core/instacart-match
 import type { ListItem } from '../core/shopping-list.ts';
 import type { Household } from '../data/household.ts';
 import { idsOf, type IngredientEntry } from '../data/ingredients.ts';
+import type { NotAdded } from '../data/instacart-not-added.ts';
 import { jobError, jobState, type Finds, type Job } from '../data/jobs.ts';
-import { MEAL_SLOTS, weekCoverage, type InstacartSection, type MealTargets, type PlannedWeek } from '../data/weeks.ts';
+import { checkoutsOf, MEAL_SLOTS, weekCoverage, type InstacartSection, type MealTargets, type PlannedWeek } from '../data/weeks.ts';
 import type { WeekList } from '../services/week-list.ts';
 
 export const weekRef = ({ id, start, end }: CalendarWeek) => ({ id, start, end });
@@ -21,9 +22,9 @@ export const shopState = ({ meals, instacart }: Pick<PlannedWeek, 'meals' | 'ins
   if (meals.length === 0) return 'not-saved';
   if (checkedOut) return 'checked-out';
   if (!approved) return 'list';
-  if (sent?.error) return 'failed';
+  if (sent?.error && sent.kind === 'fill') return 'failed';
   if (filled) return compareCart(approved.lines, filled.lines).matches ? 'filled' : 'differences';
-  if (sent) return 'filling';
+  if (sent?.kind === 'fill') return 'filling';
   return 'approved';
 };
 
@@ -193,17 +194,35 @@ export const productsView = (
   };
 };
 
-export const cartView = (planned: Pick<PlannedWeek, 'week' | 'meals' | 'instacart'>, currentListHash: string | null, storeId: string | null) => {
-  const { approved, sent, filled, checkedOut }: InstacartSection = planned.instacart;
-  const fillState = !sent ? null : sent.error ? 'failed' : filled?.fillId === sent.fillId ? 'done' : 'running';
+const withNotAdded = ({ missing, differs, ...rest }: ReturnType<typeof compareCart>, notAdded: NotAdded[]) => {
+  const byProduct = new Map(notAdded.map(({ productId, times, lastAt, said }) => [productId, { times, lastAt, said }]));
+  const evidence = (productId: string) => byProduct.get(productId) ?? null;
+  return {
+    ...rest,
+    missing: missing.map((row) => ({ ...row, notAdded: evidence(row.productId) })),
+    differs: differs.map((row) => ({ ...row, notAdded: evidence(row.productId) })),
+  };
+};
+
+export const cartView = (
+  planned: Pick<PlannedWeek, 'week' | 'meals' | 'instacart'>,
+  currentListHash: string | null,
+  storeId: string | null,
+  notAdded: NotAdded[],
+) => {
+  const section: InstacartSection = planned.instacart;
+  const { approved, sent, filled, checkedOut } = section;
+  const runState = !sent ? null : sent.error ? 'failed' : filled?.fillId === sent.fillId ? 'done' : 'running';
   return {
     week: weekRef(planned.week),
     state: shopState(planned),
     approved: approved && { lines: approved.lines.length },
-    fill: sent && { state: fillState, run: sent.sessionId, error: sent.error },
-    comparison: approved && filled ? compareCart(approved.lines, filled.lines) : null,
+    fill: sent && { kind: sent.kind, state: runState, run: sent.sessionId, error: sent.error },
+    lastRead: filled && { kind: filled.kind, at: filled.at },
+    comparison: approved && filled ? withNotAdded(compareCart(approved.lines, filled.lines), notAdded) : null,
     listChanged: Boolean(approved && currentListHash && currentListHash !== approved.listHash),
     checkedOut: Boolean(checkedOut),
+    checkouts: checkoutsOf(section).map(({ at }) => ({ at })),
     checkoutUrl: filled?.checkoutUrl ?? (storeId ? storeCheckoutLink(storeId) : null),
   };
 };

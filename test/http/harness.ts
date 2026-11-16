@@ -15,6 +15,7 @@ import {
   memoryDecisions,
   memoryIngredients,
   memoryJobs,
+  memoryNotAdded,
   memoryUnavailable,
   memoryNotes,
   memoryParsedLines,
@@ -27,6 +28,7 @@ import {
 
 export const SECRET = 'a-routine-secret-at-least-32-characters-long';
 export const RESEARCH_ROUTINE: RoutineTrigger = { url: 'https://api.example.com/routines/research/fire', token: 'research-token' };
+export const FILL_ROUTINE: RoutineTrigger = { url: 'https://api.example.com/routines/fill/fire', token: 'fill-token' };
 
 export const WEEK = '2026-W46';
 export const DATE = '2026-11-10';
@@ -68,6 +70,7 @@ export const setup = ({
   catalogRuns = [],
   catalogRecipes = [],
   unavailableRecipes = [],
+  fillRoutine = null,
 }: {
   planned?: boolean;
   researchRoutine?: RoutineTrigger | null;
@@ -77,8 +80,10 @@ export const setup = ({
   catalogRuns?: CatalogRunRecord[];
   catalogRecipes?: StoredCatalogRecipe[];
   unavailableRecipes?: UnavailableRecipe[];
+  fillRoutine?: RoutineTrigger | null;
 } = {}) => {
   const unavailable = memoryUnavailable(unavailableRecipes);
+  const notAdded = memoryNotAdded();
   const boxRecords = new Map<string, HungryrootRecipeRecord>();
   let clock = new Date('2026-11-10T18:00:00.000Z');
   const fired: { trigger: RoutineTrigger; payload: unknown }[] = [];
@@ -116,7 +121,7 @@ export const setup = ({
         return { sessionId: `cse_${fired.length}`, sessionUrl: `https://claude.example.com/code/cse_${fired.length}` };
       },
     },
-    fillRoutine: null,
+    fillRoutine,
     researchRoutine,
     routineSecret: SECRET,
     allowedOrigins: [],
@@ -127,6 +132,7 @@ export const setup = ({
       allProducts: async () => [],
     },
     unavailable: unavailable.store,
+    notAdded: notAdded.store,
     hungryrootRecipes: {
       find: async (_, ids) => ids.flatMap((id) => boxRecords.get(id) ?? []),
       save: async (_, records) => {
@@ -144,16 +150,18 @@ export const setup = ({
     });
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
-  const report = async (body: unknown, secret = SECRET) => {
-    const response = await app.request('/routines/instacart-research/result', {
+  const fromRoutine = async (path: string, body: unknown, secret: string) => {
+    const response = await app.request(path, {
       method: 'POST',
       headers: { Authorization: `Bearer ${secret}`, 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
     return { status: response.status, body: (await response.json()) as Record<string, unknown> };
   };
+  const report = async (body: unknown, secret = SECRET) => fromRoutine('/routines/instacart-research/result', body, secret);
+  const reportFill = async (body: unknown) => fromRoutine('/routines/instacart-fill/result', body, SECRET);
   const advance = (minutes: number) => {
     clock = new Date(clock.getTime() + minutes * 60 * 1000);
   };
-  return { call, report, advance, fired, jobs, weeks, ingredients, products, decisions, prompts, boxRecords, unavailable };
+  return { call, report, reportFill, advance, fired, jobs, weeks, ingredients, products, decisions, prompts, boxRecords, unavailable, notAdded };
 };

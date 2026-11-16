@@ -5,6 +5,7 @@ import { matchItem } from '../core/instacart-match.ts';
 import type { Decisions } from '../data/decisions.ts';
 import { latestFinds, type Jobs } from '../data/jobs.ts';
 import type { Household } from '../data/household.ts';
+import type { InstacartNotAdded } from '../data/instacart-not-added.ts';
 import { idsOf, setBuying, type Buying } from '../data/ingredients.ts';
 import type { ProductMemory, VeganLine } from '../data/product-memory.ts';
 import { emptyWeek, loadWeeks, OnHandSchema } from '../data/weeks.ts';
@@ -22,6 +23,7 @@ export interface ShopDeps extends ListDeps {
   veganLine: VeganLine;
   decisions: Decisions;
   jobs: Jobs;
+  notAdded: Pick<InstacartNotAdded, 'list'>;
   now?: () => Date;
 }
 
@@ -198,9 +200,14 @@ export const shopRoutes = (deps: ShopDeps) => {
   });
 
   const cartFor = async (c: Context<Env>, date: string) => {
-    const planned = await plannedWeek(c.var.household, date);
+    const household = c.var.household;
+    const planned = await plannedWeek(household, date);
     const settled = ['approved', 'filled', 'differences'].includes(shopState(planned));
-    return cartView(planned, settled ? (await productsFor(c, date)).listHash : null, c.var.household.settings.instacart?.storeId ?? null);
+    const [listHash, notAdded] = await Promise.all([
+      settled ? productsFor(c, date).then((products) => products.listHash) : null,
+      planned.instacart.filled ? deps.notAdded.list(household.id) : [],
+    ]);
+    return cartView(planned, listHash, household.settings.instacart?.storeId ?? null, notAdded);
   };
 
   routes.get('/weeks/:date/instacart', async (c) => c.json(await cartFor(c, dateParam(c))));

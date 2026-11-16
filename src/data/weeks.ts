@@ -52,23 +52,53 @@ const CartLineSchema = z.object({
 
 const InCartSchema = z.object({ productId: z.string(), quantity: z.number().positive(), name: z.string().nullable().default(null) });
 
-const SentSchema = z.object({ fillId: z.string(), sessionId: z.string(), by: z.string(), error: z.string().nullable().default(null) });
+const RunKindSchema = z.enum(['fill', 'check']).default('fill');
+
+const SentItemSchema = z.object({ productId: z.string(), quantity: z.number().int().positive() });
+
+const SentSchema = z.object({
+  fillId: z.string(),
+  sessionId: z.string(),
+  by: z.string(),
+  error: z.string().nullable().default(null),
+  kind: RunKindSchema,
+  items: z.array(SentItemSchema).nullable().default(null),
+});
+
+const ApprovedCartSchema = z.object({ lines: z.array(CartLineSchema), listHash: z.string(), by: z.string() });
+
+const CheckoutSchema = z.object({ by: z.string(), at: z.string().nullable().default(null) });
 
 export const InstacartSectionSchema = z.object({
   retailer: z.string().nullable().default(null),
-  approved: z.object({ lines: z.array(CartLineSchema), listHash: z.string(), by: z.string() }).nullable().default(null),
+  approved: ApprovedCartSchema.nullable().default(null),
   sent: SentSchema.nullable().default(null),
   filled: z
-    .object({ by: z.string(), lines: z.array(InCartSchema), fillId: z.string().nullable().default(null), checkoutUrl: z.string().nullable().default(null) })
+    .object({
+      by: z.string(),
+      lines: z.array(InCartSchema),
+      fillId: z.string().nullable().default(null),
+      checkoutUrl: z.string().nullable().default(null),
+      kind: RunKindSchema,
+      at: z.string().nullable().default(null),
+    })
     .nullable()
     .default(null),
   checkedOut: z.object({ by: z.string() }).nullable().default(null),
+  checkouts: z.array(CheckoutSchema).default([]),
 });
 
 export type InstacartSection = z.infer<typeof InstacartSectionSchema>;
 export type CartLine = z.infer<typeof CartLineSchema>;
 export type InCart = z.infer<typeof InCartSchema>;
-export const emptyInstacartSection = (): InstacartSection => ({ retailer: null, approved: null, sent: null, filled: null, checkedOut: null });
+export type SentItem = z.infer<typeof SentItemSchema>;
+export type ApprovedCart = z.infer<typeof ApprovedCartSchema>;
+export type RunKind = z.infer<typeof RunKindSchema>;
+export type Checkout = z.infer<typeof CheckoutSchema>;
+export const emptyInstacartSection = (): InstacartSection => ({ retailer: null, approved: null, sent: null, filled: null, checkedOut: null, checkouts: [] });
+
+export const checkoutsOf = ({ checkedOut, checkouts }: Pick<InstacartSection, 'checkedOut' | 'checkouts'>): Checkout[] =>
+  checkouts.length > 0 || !checkedOut ? checkouts : [{ by: checkedOut.by, at: null }];
 
 export const OnHandSchema = z.object({ amount: z.number().positive(), unit: z.union([z.literal('pack'), z.enum(UNITS)]) });
 const HaveAnswerSchema = z.union([z.boolean(), OnHandSchema]);

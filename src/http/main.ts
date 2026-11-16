@@ -8,6 +8,7 @@ import { firestoreHouseholds } from '../data/firestore-households.ts';
 import { firestoreHungryrootCatalog } from '../data/firestore-hungryroot-catalog.ts';
 import { firestoreHungryrootRecipes } from '../data/firestore-hungryroot-recipes.ts';
 import { firestoreHungryrootUnavailable } from '../data/firestore-hungryroot-unavailable.ts';
+import { firestoreInstacartNotAdded } from '../data/firestore-instacart-not-added.ts';
 import { firestoreIngredients } from '../data/firestore-ingredients.ts';
 import { firestoreJobs } from '../data/firestore-jobs.ts';
 import { firestoreNotes } from '../data/firestore-notes.ts';
@@ -51,6 +52,7 @@ const main = () => {
     catalog: firestoreHungryrootCatalog(db),
     hungryrootRecipes: firestoreHungryrootRecipes(db),
     unavailable: firestoreHungryrootUnavailable(db),
+    notAdded: firestoreInstacartNotAdded(db),
   });
   serve({ fetch: app.fetch, port: config.port }, ({ port }) => logger.info({ port }, 'Économe HTTP server ready'));
 };

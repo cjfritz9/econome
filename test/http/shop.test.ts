@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { BrandedFood } from '../../src/sources/fdc.ts';
-import { DATE, setup, WEEK } from './harness.ts';
+import { DATE, FILL_ROUTINE, setup, WEEK } from './harness.ts';
 
 interface Row {
   ingredientId: string;
@@ -304,5 +304,91 @@ describe('the Instacart cart', () => {
     const { call } = setup();
 
     expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ checkoutUrl: 'https://www.instacart.com/store/checkout_v4?sid=1234' });
+  });
+});
+
+describe('checking the Instacart cart and adding what is missing', () => {
+  const approve = async (call: ReturnType<typeof setup>['call']) => {
+    const { listHash } = (await call('GET', `/weeks/${DATE}/products`)).body;
+    expect((await call('POST', `/weeks/${DATE}/instacart/approve`, { listHash })).status).toBe(200);
+  };
+  const cart = (fillId: unknown, lines: { product_id: string; quantity: number }[], more: Record<string, unknown> = {}) => ({
+    fill_id: fillId,
+    carts: [{ retailer: 'Wegmans', lines, ...more }],
+    error: null,
+  });
+  const lastPayload = (fired: ReturnType<typeof setup>['fired']) => fired.at(-1)?.payload as { carts: { items: unknown[] }[] };
+
+  it("counts a product a fill sent that didn't land, shows it on its row with Instacart's words, and clears it once it lands", async () => {
+    const { call, reportFill, fired, advance, notAdded } = setup({ fillRoutine: FILL_ROUTINE });
+    await approve(call);
+
+    const filling = await call('POST', `/weeks/${DATE}/instacart/fill`);
+    expect(filling).toMatchObject({ status: 202, body: { kind: 'fill', items: 1 } });
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'filling', fill: { kind: 'fill', state: 'running' }, lastRead: null });
+    await reportFill(cart(filling.body.fillId, [], { summary: 'Cart updated (added 0 items).', item_errors: [] }));
+
+    const missed = { times: 1, lastAt: '2026-11-10T18:00:00.000Z', said: 'Cart updated (added 0 items).' };
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({
+      state: 'differences',
+      fill: { kind: 'fill', state: 'done' },
+      lastRead: { kind: 'fill', at: '2026-11-10T18:00:00.000Z' },
+      comparison: { missing: [{ productId: '111', quantity: 2, notAdded: missed }] },
+    });
+
+    advance(60);
+    const checking = await call('POST', `/weeks/${DATE}/instacart/check`);
+    expect(checking).toMatchObject({ status: 202, body: { kind: 'check', items: 0 } });
+    expect(lastPayload(fired).carts[0]?.items).toEqual([]);
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'differences', fill: { kind: 'check', state: 'running' } });
+    await reportFill(cart(checking.body.fillId, [{ product_id: '111', quantity: 1 }]));
+
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({
+      state: 'differences',
+      lastRead: { kind: 'check', at: '2026-11-10T19:00:00.000Z' },
+      comparison: { missing: [], differs: [{ productId: '111', wanted: 2, inCart: 1, notAdded: missed }] },
+    });
+
+    const adding = await call('POST', `/weeks/${DATE}/instacart/fill`, { only: 'missing' });
+    expect(adding).toMatchObject({ status: 202, body: { kind: 'fill', items: 1 } });
+    expect(lastPayload(fired).carts[0]?.items).toEqual([{ product_id: '111', quantity: 2 }]);
+    await reportFill(cart(adding.body.fillId, [{ product_id: '111', quantity: 2 }]));
+
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'filled', comparison: { matches: true } });
+    expect(notAdded.records.size).toBe(0);
+  });
+
+  it("asks for a check before adding what's missing, and says when nothing is", async () => {
+    const { call, reportFill, fired } = setup({ fillRoutine: FILL_ROUTINE });
+    await approve(call);
+
+    expect(await call('POST', `/weeks/${DATE}/instacart/fill`, { only: 'missing' })).toMatchObject({ status: 409, body: { error: expect.stringMatching(/Check the cart first/) } });
+
+    const checking = await call('POST', `/weeks/${DATE}/instacart/check`);
+    await reportFill(cart(checking.body.fillId, [{ product_id: '111', quantity: 3 }]));
+    const firedBefore = fired.length;
+
+    expect(await call('POST', `/weeks/${DATE}/instacart/fill`, { only: 'missing' })).toMatchObject({ status: 409, body: { error: expect.stringMatching(/Nothing approved is missing/) } });
+    expect(fired).toHaveLength(firedBefore);
+  });
+
+  it('keeps every checkout through a new fill and a new approval', async () => {
+    const { call, advance } = setup({ fillRoutine: FILL_ROUTINE });
+    await approve(call);
+    await call('POST', `/weeks/${DATE}/instacart/checked-out`);
+    advance(5);
+    await call('POST', `/weeks/${DATE}/instacart/checked-out`);
+
+    const ordered = [{ at: '2026-11-10T18:00:00.000Z' }];
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'checked-out', checkedOut: true, checkouts: ordered });
+
+    await call('POST', `/weeks/${DATE}/instacart/check`);
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'checked-out', checkedOut: true, checkouts: ordered });
+
+    await call('POST', `/weeks/${DATE}/instacart/fill`);
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'filling', checkedOut: false, checkouts: ordered });
+
+    await approve(call);
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ state: 'approved', checkedOut: false, checkouts: ordered });
   });
 });
