@@ -5,7 +5,7 @@ import type { ListItem } from '../core/shopping-list.ts';
 import type { Household } from '../data/household.ts';
 import { idsOf, type IngredientEntry } from '../data/ingredients.ts';
 import { jobError, jobState, type Finds, type Job } from '../data/jobs.ts';
-import { MEAL_SLOTS, weekCoverage, type InstacartSection, type PlannedWeek } from '../data/weeks.ts';
+import { MEAL_SLOTS, weekCoverage, type InstacartSection, type MealTargets, type PlannedWeek } from '../data/weeks.ts';
 import type { WeekList } from '../services/week-list.ts';
 
 export const weekRef = ({ id, start, end }: CalendarWeek) => ({ id, start, end });
@@ -27,6 +27,24 @@ export const shopState = ({ meals, instacart }: Pick<PlannedWeek, 'meals' | 'ins
   return 'approved';
 };
 
+export const coverageView = (coverage: ReturnType<typeof weekCoverage>, targets: MealTargets) =>
+  Object.fromEntries(
+    MEAL_SLOTS.map((slot) => {
+      const target = targets[slot] ?? 0;
+      const { planned, fromHungryroot, fromLeftovers } = coverage[slot];
+      return [
+        slot,
+        {
+          planned,
+          target,
+          leftToPlan: Math.max(0, target - planned),
+          fromHungryroot,
+          ...(slot === 'lunch' && { fromLeftovers }),
+        },
+      ];
+    }),
+  );
+
 const boxState = (planned: PlannedWeek, household: Household, now: Date) => {
   if (planned.hungryroot.length > 0) return planned.boxLocked ? 'locked' : 'confirmed';
   const cutoff = boxCutoff(planned.week, household.settings.hungryroot?.cutoffDay);
@@ -41,12 +59,7 @@ export const weekView = (planned: PlannedWeek, household: Household, now: Date) 
     week: weekRef(planned.week),
     saved: planned.meals.length > 0,
     meals: planned.meals.map(({ recipeId, title, servings, slot = 'dinner' }) => ({ recipeId, title, servings, slot, extra: hasTargets && !targets[slot] })),
-    coverage: Object.fromEntries(
-      MEAL_SLOTS.map((slot) => [
-        slot,
-        { planned: coverage[slot].planned, target: targets[slot] ?? 0, ...(slot === 'lunch' && { fromLeftovers: coverage.lunch.fromLeftovers }) },
-      ]),
-    ),
+    coverage: coverageView(coverage, targets),
     hungryroot: {
       state: boxState(planned, household, now),
       cutoff: boxCutoff(planned.week, household.settings.hungryroot?.cutoffDay),

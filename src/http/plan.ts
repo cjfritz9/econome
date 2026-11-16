@@ -11,15 +11,16 @@ import { emptyWeek, lastPlannedDates, loadWeeks, MealSlot, planMeals, RECENT_WEE
 import { logger } from '../logger.ts';
 import { RefusedError, UnavailableError, UpstreamError } from '../services/errors.ts';
 import { lookupService, type LookupDeps } from '../services/lookups.ts';
+import { mealSuggestionService } from '../services/meal-suggestions.ts';
 import { weekList, type ListDeps } from '../services/week-list.ts';
 import { dateParam, jsonBody, type Env } from './context.ts';
-import { jobView, weekRef, weekView } from './views.ts';
+import { coverageView, jobView, weekRef, weekView } from './views.ts';
 
 const MAX_MEALS = 60;
 
-const MealsBody = z.object({
-  meals: z.array(z.object({ recipeId: z.string().min(1), slot: MealSlot.optional() })).max(MAX_MEALS),
-});
+const MealRequests = z.array(z.object({ recipeId: z.string().min(1), slot: MealSlot.optional() })).max(MAX_MEALS);
+const MealsBody = z.object({ meals: MealRequests });
+const DraftBody = z.object({ meals: MealRequests.optional() });
 
 export type PlanDeps = LookupDeps & ListDeps;
 
@@ -27,6 +28,7 @@ export const planRoutes = (deps: PlanDeps) => {
   const routes = new Hono<Env>();
   const lookups = lookupService(deps);
   const now = deps.now ?? (() => new Date());
+  const mealSuggestions = mealSuggestionService({ ...deps, now });
 
   routes.get('/recipes/facts', async (c) => {
     const household = c.var.household;
@@ -58,17 +60,22 @@ export const planRoutes = (deps: PlanDeps) => {
     return c.json({ recipes: Object.fromEntries(facts), ...(library.skipped.length > 0 && { skipped: library.skipped }) });
   });
 
-  routes.put('/weeks/:date/meals', async (c) => {
-    const { meals: requests } = await jsonBody(c, MealsBody);
-    const household = c.var.household;
-    const date = dateParam(c);
-    const week = chooseWeek(household.settings.timezone, date);
-    const library = readLibrary(await deps.recipes.listRecipeDocs(household.id));
+  const refuseUnknownRecipes = async (householdId: string, requests: { recipeId: string }[]) => {
+    const library = readLibrary(await deps.recipes.listRecipeDocs(householdId));
     const known = new Set(library.recipes.map(({ id }) => id));
     const unknown = [...new Set(requests.map(({ recipeId }) => recipeId).filter((id) => !known.has(id)))];
     if (unknown.length > 0) {
       throw new HTTPException(400, { message: `These aren't recipes that can be planned: ${unknown.join(', ')}. Archived recipes and non-meals can't be planned.` });
     }
+    return library;
+  };
+
+  routes.put('/weeks/:date/meals', async (c) => {
+    const { meals: requests } = await jsonBody(c, MealsBody);
+    const household = c.var.household;
+    const date = dateParam(c);
+    const week = chooseWeek(household.settings.timezone, date);
+    const library = await refuseUnknownRecipes(household.id, requests);
     await deps.weeks.savePlan(household.id, week.id, { meals: planMeals(library.recipes, requests) }, c.var.uid);
 
     const warnings: { message: string }[] = [];
@@ -88,6 +95,15 @@ export const planRoutes = (deps: PlanDeps) => {
 
     const [saved = { week, ...emptyWeek() }] = await loadWeeks(deps.weeks, household.id, [week]);
     return c.json({ ...weekView(saved, household, now()), lookup: lookup && jobView(lookup, now()), warnings });
+  });
+
+  routes.post('/weeks/:date/meals/suggestions', async (c) => {
+    const draft = (await jsonBody(c, DraftBody.nullable()))?.meals;
+    const household = c.var.household;
+    const date = dateParam(c);
+    if (draft) await refuseUnknownRecipes(household.id, draft);
+    const { week, coverage, targets, ...result } = await mealSuggestions.suggest(household, chooseWeek(household.settings.timezone, date), draft);
+    return c.json({ week: weekRef(week), ...result, coverage: coverageView(coverage, targets) });
   });
 
   routes.get('/calendar', (c) => {
