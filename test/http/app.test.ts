@@ -238,7 +238,7 @@ describe('starting a fill', () => {
   });
 
   it('checks the cart by sending the routine nothing to change, keeping the last read and the checkout mark until the new read arrives', async () => {
-    const filled = { by: 'uid1', lines: [{ productId: '111', quantity: 2, name: null }], fillId: null, checkoutUrl: null, kind: 'fill' as const, at: null };
+    const filled = { by: 'uid1', lines: [{ productId: '111', quantity: 2, name: null }], fillId: null, checkoutUrl: null, kind: 'fill' as const, at: null, removed: null };
     const { app, saved, fired } = setup({ sections: { 'h1/2026-W46': { ...approved(), filled, checkedOut: { by: 'uid1' } } } });
 
     const response = await app.request('/api/weeks/2026-11-11/instacart/check', signedIn('token-1', { method: 'POST' }));
@@ -261,6 +261,60 @@ describe('starting a fill', () => {
   it('says so when the fill routine is not set up, or the date is not a date', async () => {
     expect((await fill(setup({ sections: { 'h1/2026-W46': approved() }, fillRoutine: null }).app)).status).toBe(503);
     expect((await fill(setup().app, 'next-week')).status).toBe(400);
+  });
+});
+
+describe('clearing the cart', () => {
+  const clear = (app: ReturnType<typeof setup>['app']) => app.request('/api/weeks/2026-11-11/instacart/clear', signedIn('token-1', { method: 'POST' }));
+  const FILL_ID = 'h1.2026-11-09.0f8fad5b-d9cb-469f-a165-70867728950e';
+
+  it("asks the routine to empty the store's cart, keeping the approval and the last read until the routine reports", async () => {
+    const filled = { by: 'uid1', lines: [{ productId: '111', quantity: 2, name: null }], fillId: null, checkoutUrl: null, kind: 'fill' as const, at: null, removed: null };
+    const { app, saved, fired } = setup({ sections: { 'h1/2026-W46': { ...approved(), filled, checkedOut: { by: 'uid1' } } } });
+
+    const response = await clear(app);
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ week: '2026-W46', kind: 'clear', items: 0 });
+    expect(fired[0]?.payload).toMatchObject({ carts: [{ retailer: 'Wegmans', clear: true, items: [] }] });
+    expect(saved.get('h1/2026-W46')).toMatchObject({ approved: approved().approved, filled, checkedOut: { by: 'uid1' }, sent: { kind: 'clear', items: [] } });
+  });
+
+  it("works on a week that isn't approved, at the household's store", async () => {
+    const { app, fired } = setup({ sections: { 'h1/2026-W46': emptyInstacartSection() } });
+
+    expect((await clear(app)).status).toBe(202);
+    expect(fired[0]?.payload).toMatchObject({ carts: [{ retailer: 'Wegmans', clear: true }] });
+  });
+
+  it('records what the clear removed and the empty cart, starts a new cart, and keeps the checkouts and the not-added counts', async () => {
+    const sent = { fillId: FILL_ID, sessionId: 'cse_1', by: 'uid1', error: null, kind: 'clear' as const, items: [] };
+    const missed = { productId: '222', name: 'Lemons', times: 1, firstAt: 'then', lastAt: 'then', lastWeek: '2026-W46', said: null };
+    const { app, saved, notAdded } = setup({ sections: { 'h1/2026-W46': { ...approved(), sent, checkedOut: { by: 'uid1' } } } });
+    notAdded.records.set('222', missed);
+
+    const reported = {
+      fill_id: FILL_ID,
+      carts: [{ retailer: 'Wegmans', lines: [], removed: [{ product_id: '111', name: 'Organic Extra Firm Tofu', quantity: 2 }, { product_id: '333', name: 'Cucumber', quantity: 1 }] }],
+      error: null,
+    };
+    const response = await app.request('/routines/instacart-fill/result', fromRoutine(reported));
+
+    expect(response.status).toBe(200);
+    expect(saved.get('h1/2026-W46')).toMatchObject({
+      approved: approved().approved,
+      filled: {
+        kind: 'clear',
+        lines: [],
+        removed: [
+          { productId: '111', quantity: 2, name: 'Organic Extra Firm Tofu' },
+          { productId: '333', quantity: 1, name: 'Cucumber' },
+        ],
+      },
+      checkedOut: null,
+      checkouts: [{ by: 'uid1', at: null }],
+    });
+    expect([...notAdded.records.values()]).toEqual([missed]);
   });
 });
 
@@ -298,6 +352,7 @@ describe("receiving a fill's result", () => {
       checkoutUrl: null,
       kind: 'fill',
       at: '2026-11-10T18:00:00.000Z',
+      removed: null,
     });
   });
 

@@ -26,9 +26,9 @@ export const checkoutLink = (reported: string | null | undefined) => {
 
 export const storeCheckoutLink = (storeId: string) => `https://${CHECKOUT_HOST}/store/checkout_v4?sid=${storeId}`;
 
-export const fillRequest = (fillId: string, retailer: string, items: SentItem[]) => ({
+export const fillRequest = (fillId: string, retailer: string, items: SentItem[], { clear = false } = {}) => ({
   fill_id: fillId,
-  carts: [{ retailer, items: connectorItems(items) }],
+  carts: [{ retailer, ...(clear && { clear: true }), items: connectorItems(items) }],
 });
 
 export interface ConnectorWords {

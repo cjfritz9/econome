@@ -372,6 +372,29 @@ describe('checking the Instacart cart and adding what is missing', () => {
     expect(fired).toHaveLength(firedBefore);
   });
 
+  it('empties the cart to a fresh slate that the approval can fill again', async () => {
+    const { call, reportFill, fired } = setup({ fillRoutine: FILL_ROUTINE });
+    await approve(call);
+    await call('POST', `/weeks/${DATE}/instacart/checked-out`);
+
+    const clearing = await call('POST', `/weeks/${DATE}/instacart/clear`);
+    expect(clearing).toMatchObject({ status: 202, body: { kind: 'clear', items: 0 } });
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({ fill: { kind: 'clear', state: 'running' }, checkedOut: true });
+    await reportFill(cart(clearing.body.fillId, [], { removed: [{ product_id: '111', name: 'Organic Extra Firm Tofu', quantity: 2 }] }));
+
+    expect((await call('GET', `/weeks/${DATE}/instacart`)).body).toMatchObject({
+      state: 'differences',
+      fill: { kind: 'clear', state: 'done' },
+      lastRead: { kind: 'clear', at: '2026-11-10T18:00:00.000Z', removed: [{ productId: '111', quantity: 2, name: 'Organic Extra Firm Tofu' }] },
+      comparison: { missing: [{ productId: '111', quantity: 2, notAdded: null }], extra: [] },
+      checkedOut: false,
+      checkouts: [{ at: '2026-11-10T18:00:00.000Z' }],
+    });
+
+    expect((await call('POST', `/weeks/${DATE}/instacart/fill`, { only: 'missing' })).status).toBe(202);
+    expect(lastPayload(fired).carts[0]?.items).toEqual([{ product_id: '111', quantity: 2 }]);
+  });
+
   it('keeps every checkout through a new fill and a new approval', async () => {
     const { call, advance } = setup({ fillRoutine: FILL_ROUTINE });
     await approve(call);

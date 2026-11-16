@@ -13,7 +13,7 @@ import type { HungryrootCatalogStore } from '../data/hungryroot-catalog.ts';
 import type { HungryrootRecipes } from '../data/hungryroot-recipes.ts';
 import type { HungryrootUnavailable } from '../data/hungryroot-unavailable.ts';
 import type { InstacartNotAdded } from '../data/instacart-not-added.ts';
-import { checkoutsOf, loadWeeks, type ApprovedCart, type InstacartSection, type RunKind, type SentItem, type Weeks } from '../data/weeks.ts';
+import { checkoutsOf, emptyWeek, loadWeeks, type InstacartSection, type RunKind, type SentItem, type Weeks } from '../data/weeks.ts';
 import { logger } from '../logger.ts';
 import { NotFoundError, RefusedError, UnavailableError, UpstreamError } from '../services/errors.ts';
 import { lookupService, type LookupDeps } from '../services/lookups.ts';
@@ -59,6 +59,10 @@ const FillResultSchema = z.object({
         retailer: z.string(),
         checkout_url: z.string().nullish(),
         lines: z.array(z.object({ product_id: z.string().regex(/^\d+$/), name: z.string().nullish(), quantity: z.number().positive() })),
+        removed: z
+          .array(z.object({ product_id: z.string().regex(/^\d+$/), name: z.string().nullish(), quantity: z.number().positive() }))
+          .nullish()
+          .transform((lines) => lines ?? []),
         summary: z.string().nullish().transform(said),
         item_errors: z
           .array(z.object({ product_id: z.string(), message: z.string().transform(said) }))
@@ -142,19 +146,23 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
 
   app.get('/api/household', async (c) => c.json(await describeHousehold(c.var.household, households, spend)));
 
-  const startRun = async (c: Context<Env>, kind: RunKind, itemsOf: (section: InstacartSection & { approved: ApprovedCart }) => SentItem[]) => {
+  const approvedIn = (section: InstacartSection, weekId: string) => {
+    if (!section.approved) throw new HTTPException(409, { message: `${weekId}'s Instacart cart isn't approved yet.` });
+    return section.approved;
+  };
+
+  const startRun = async (c: Context<Env>, kind: RunKind, itemsOf: (section: InstacartSection, weekId: string) => SentItem[]) => {
     if (!fillRoutine) throw new HTTPException(503, { message: "The fill routine isn't set up on this server." });
     const household = c.var.household;
     const week = chooseWeek(household.settings.timezone, dateParam(c));
-    const [planned] = await loadWeeks(weeks, household.id, [week]);
-    const section = planned?.instacart;
-    if (!section?.approved) throw new HTTPException(409, { message: `${week.id}'s Instacart cart isn't approved yet.` });
+    const [planned = { week, ...emptyWeek() }] = await loadWeeks(weeks, household.id, [week]);
+    const section = planned.instacart;
+    const items = itemsOf(section, week.id);
     const retailer = section.retailer ?? household.settings.instacart?.retailer;
     if (!retailer) throw new HTTPException(409, { message: 'No Instacart store is set for this household.' });
-    const items = itemsOf({ ...section, approved: section.approved });
 
     const fillId = newFillId(household.id, week);
-    const run = await routines.fire(fillRoutine, fillRequest(fillId, retailer, items)).catch((error: unknown) => {
+    const run = await routines.fire(fillRoutine, fillRequest(fillId, retailer, items, { clear: kind === 'clear' })).catch((error: unknown) => {
       logger.error({ err: error, week: week.id, kind }, 'The fill routine would not start');
       throw new HTTPException(502, { message: "Claude's cart routine wouldn't start. Try again in a minute." });
     });
@@ -166,16 +174,24 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
 
   app.post('/api/weeks/:date/instacart/fill', async (c) => {
     const only = (await jsonBody(c, FillBody))?.only;
-    return startRun(c, 'fill', ({ approved, filled }) => {
+    return startRun(c, 'fill', (section, weekId) => {
+      const approved = approvedIn(section, weekId);
       if (!only) return combinedLines(approved.lines);
-      if (!filled) throw new RefusedError("Économe hasn't read this cart yet, so it can't tell what's missing. Check the cart first.");
-      const short = shortOf(approved.lines, filled.lines);
+      if (!section.filled) throw new RefusedError("Économe hasn't read this cart yet, so it can't tell what's missing. Check the cart first.");
+      const short = shortOf(approved.lines, section.filled.lines);
       if (short.length === 0) throw new RefusedError("Nothing approved is missing from the cart as Économe last read it. Check the cart again if it's changed since.");
       return short;
     });
   });
 
-  app.post('/api/weeks/:date/instacart/check', async (c) => startRun(c, 'check', () => []));
+  app.post('/api/weeks/:date/instacart/check', async (c) =>
+    startRun(c, 'check', (section, weekId) => {
+      approvedIn(section, weekId);
+      return [];
+    }),
+  );
+
+  app.post('/api/weeks/:date/instacart/clear', async (c) => startRun(c, 'clear', () => []));
 
   app.route('/api', shopRoutes(shop));
   app.route('/api', jobRoutes(lookups));
@@ -201,7 +217,9 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     const [planned] = await loadWeeks(weeks, target.householdId, [target.week]);
     const section = planned?.instacart;
     const sent = section?.sent;
-    if (!section?.approved || !sent || sent.fillId !== result.fill_id) throw new HTTPException(404, { message: 'No fill with that ID is waiting.' });
+    if (!section || !sent || sent.fillId !== result.fill_id || (!section.approved && sent.kind !== 'clear')) {
+      throw new HTTPException(404, { message: 'No fill with that ID is waiting.' });
+    }
     if (section.filled?.fillId === result.fill_id || sent.error) throw new HTTPException(409, { message: "That fill's result is already recorded." });
 
     if (result.error) {
@@ -215,17 +233,19 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     if (!cart) throw new HTTPException(400, { message: `The result has no cart for ${retailer ?? "the week's store"}.` });
     const lines = cart.lines.map(({ product_id, name, quantity }) => ({ productId: product_id, quantity, name: name ?? null }));
     const at = now().toISOString();
-    const filled = { by: sent.by, lines, fillId: result.fill_id, checkoutUrl: checkoutLink(cart.checkout_url), kind: sent.kind, at };
-    await weeks.saveInstacart(target.householdId, target.week.id, { ...section, filled });
+    const removed = sent.kind === 'clear' ? cart.removed.map(({ product_id, name, quantity }) => ({ productId: product_id, quantity, name: name ?? null })) : null;
+    const filled = { by: sent.by, lines, fillId: result.fill_id, checkoutUrl: checkoutLink(cart.checkout_url), kind: sent.kind, at, removed };
+    const cleared = sent.kind === 'clear' && { checkedOut: null, checkouts: checkoutsOf(section) };
+    await weeks.saveInstacart(target.householdId, target.week.id, { ...section, filled, ...cleared });
 
-    if (sent.kind === 'fill') {
+    if (sent.kind === 'fill' && section.approved) {
       const words = { summary: cart.summary, itemErrors: cart.item_errors.flatMap(({ product_id, message }) => (message ? [{ productId: product_id, message }] : [])) };
       const outcome = fillOutcome(sent.items ?? combinedLines(section.approved.lines), lines, section.approved.lines, words);
       await notAdded.record(target.householdId, { week: target.week.id, at, ...outcome }).catch((error: unknown) => {
         logger.error({ err: error, week: target.week.id, missed: outcome.missed.length }, "Couldn't record which products Instacart didn't add");
       });
     }
-    return c.json({ week: target.week.id, ...compareCart(section.approved.lines, lines) });
+    return c.json({ week: target.week.id, ...(section.approved && compareCart(section.approved.lines, lines)) });
   });
 
   app.post('/routines/instacart-research/result', fromRoutine, async (c) => {

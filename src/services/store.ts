@@ -245,7 +245,7 @@ export const storeService = ({ fdc, productMemory, veganLine, ingredients, parse
   const recordCart = async (household: Household, date: string | undefined, items: InCart[], checkoutUrl: string | null = null) => {
     const { week, section } = await weekSection(household, date);
     if (!section.approved) throw new RefusedError(`${week.id}'s Instacart cart isn't approved yet; approve it first.`);
-    await weeks.saveInstacart(household.id, week.id, { ...section, filled: { by, lines: items, fillId: null, checkoutUrl, kind: 'fill', at: now().toISOString() } });
+    await weeks.saveInstacart(household.id, week.id, { ...section, filled: { by, lines: items, fillId: null, checkoutUrl, kind: 'fill', at: now().toISOString(), removed: null } });
     const { buy } = await buyList(household, date);
     return {
       week: week.id,

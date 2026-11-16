@@ -218,7 +218,7 @@ export const cartView = (
     state: shopState(planned),
     approved: approved && { lines: approved.lines.length },
     fill: sent && { kind: sent.kind, state: runState, run: sent.sessionId, error: sent.error },
-    lastRead: filled && { kind: filled.kind, at: filled.at },
+    lastRead: filled && { kind: filled.kind, at: filled.at, removed: filled.removed },
     comparison: approved && filled ? withNotAdded(compareCart(approved.lines, filled.lines), notAdded) : null,
     listChanged: Boolean(approved && currentListHash && currentListHash !== approved.listHash),
     checkedOut: Boolean(checkedOut),

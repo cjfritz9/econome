@@ -25,6 +25,7 @@ describe('fillRequest', () => {
       carts: [{ retailer: 'Wegmans', items: [{ product_id: '111', quantity: 3 }] }],
     });
     expect(fillRequest('check-1', 'Wegmans', [])).toEqual({ fill_id: 'check-1', carts: [{ retailer: 'Wegmans', items: [] }] });
+    expect(fillRequest('clear-1', 'Wegmans', [], { clear: true })).toEqual({ fill_id: 'clear-1', carts: [{ retailer: 'Wegmans', clear: true, items: [] }] });
   });
 });
 

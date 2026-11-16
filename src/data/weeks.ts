@@ -52,7 +52,7 @@ const CartLineSchema = z.object({
 
 const InCartSchema = z.object({ productId: z.string(), quantity: z.number().positive(), name: z.string().nullable().default(null) });
 
-const RunKindSchema = z.enum(['fill', 'check']).default('fill');
+const RunKindSchema = z.enum(['fill', 'check', 'clear']).default('fill');
 
 const SentItemSchema = z.object({ productId: z.string(), quantity: z.number().int().positive() });
 
@@ -81,6 +81,7 @@ export const InstacartSectionSchema = z.object({
       checkoutUrl: z.string().nullable().default(null),
       kind: RunKindSchema,
       at: z.string().nullable().default(null),
+      removed: z.array(InCartSchema).nullable().default(null),
     })
     .nullable()
     .default(null),
