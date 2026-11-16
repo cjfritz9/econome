@@ -63,6 +63,7 @@ const SentSchema = z.object({
   error: z.string().nullable().default(null),
   kind: RunKindSchema,
   items: z.array(SentItemSchema).nullable().default(null),
+  clear: z.boolean().default(false),
 });
 
 const ApprovedCartSchema = z.object({ lines: z.array(CartLineSchema), listHash: z.string(), by: z.string() });

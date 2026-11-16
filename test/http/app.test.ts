@@ -226,7 +226,34 @@ describe('starting a fill', () => {
         { productId: '111', quantity: 2 },
         { productId: '222', quantity: 2 },
       ],
+      clear: false,
     });
+  });
+
+  it('starts over in one run: the routine empties the cart, then sets every approved product', async () => {
+    const { app, saved, fired } = setup({ sections: { 'h1/2026-W46': { ...approved(), checkedOut: { by: 'uid1' } } } });
+
+    const response = await app.request('/api/weeks/2026-11-11/instacart/fill', signedIn('token-1', { method: 'POST', body: JSON.stringify({ clear: true }) }));
+
+    expect(response.status).toBe(202);
+    expect(await response.json()).toMatchObject({ kind: 'fill', items: 2 });
+    expect(fired[0]?.payload).toMatchObject({
+      carts: [{ retailer: 'Wegmans', clear: true, items: [{ product_id: '111', quantity: 2 }, { product_id: '222', quantity: 2 }] }],
+    });
+    expect(saved.get('h1/2026-W46')).toMatchObject({ sent: { kind: 'fill', clear: true }, filled: null, checkedOut: null, checkouts: [{ by: 'uid1', at: null }] });
+  });
+
+  it("refuses to clear and send only what's missing at once, without starting anything", async () => {
+    const { app, fired } = setup({ sections: { 'h1/2026-W46': approved() } });
+
+    const response = await app.request(
+      '/api/weeks/2026-11-11/instacart/fill',
+      signedIn('token-1', { method: 'POST', body: JSON.stringify({ clear: true, only: 'missing' }) }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toEqual({ error: expect.stringContaining('Send clear or only, not both') });
+    expect(fired).toEqual([]);
   });
 
   it("starts a new cart: a fill clears the week's checkout mark but keeps it in the checkouts, even one recorded before there was a history", async () => {
@@ -288,7 +315,7 @@ describe('clearing the cart', () => {
   });
 
   it('records what the clear removed and the empty cart, starts a new cart, and keeps the checkouts and the not-added counts', async () => {
-    const sent = { fillId: FILL_ID, sessionId: 'cse_1', by: 'uid1', error: null, kind: 'clear' as const, items: [] };
+    const sent = { fillId: FILL_ID, sessionId: 'cse_1', by: 'uid1', error: null, kind: 'clear' as const, items: [], clear: true };
     const missed = { productId: '222', name: 'Lemons', times: 1, firstAt: 'then', lastAt: 'then', lastWeek: '2026-W46', said: null };
     const { app, saved, notAdded } = setup({ sections: { 'h1/2026-W46': { ...approved(), sent, checkedOut: { by: 'uid1' } } } });
     notAdded.records.set('222', missed);
@@ -321,7 +348,7 @@ describe('clearing the cart', () => {
 describe("receiving a fill's result", () => {
   const sentWeek = (fillId: string, kind: 'fill' | 'check' = 'fill'): InstacartSection => ({
     ...approved(),
-    sent: { fillId, sessionId: 'cse_1', by: 'uid1', error: null, kind, items: null },
+    sent: { fillId, sessionId: 'cse_1', by: 'uid1', error: null, kind, items: null, clear: false },
   });
   const FILL_ID = 'h1.2026-11-09.0f8fad5b-d9cb-469f-a165-70867728950e';
   const cart = (lines: Array<{ product_id: string; quantity: number; name?: string }>) => ({ fill_id: FILL_ID, carts: [{ retailer: 'wegmans', lines }], error: null });
@@ -376,6 +403,21 @@ describe("receiving a fill's result", () => {
       { productId: '111', name: 'Organic Extra Firm Tofu', times: 1, firstAt: '2026-11-10T18:00:00.000Z', lastAt: '2026-11-10T18:00:00.000Z', lastWeek: '2026-W46', said: 'Cart updated (added 1 item).' },
       { productId: '222', name: 'Lemons', times: 1, firstAt: '2026-11-10T18:00:00.000Z', lastAt: '2026-11-10T18:00:00.000Z', lastWeek: '2026-W46', said: 'Out of stock' },
     ]);
+  });
+
+  it('keeps what a clear-and-refill removed, and counts what then failed to land like any fill', async () => {
+    const sent = { fillId: FILL_ID, sessionId: 'cse_1', by: 'uid1', error: null, kind: 'fill' as const, items: null, clear: true };
+    const { app, saved, notAdded } = setup({ sections: { 'h1/2026-W46': { ...approved(), sent } } });
+    const reported = {
+      fill_id: FILL_ID,
+      carts: [{ retailer: 'Wegmans', lines: [{ product_id: '111', quantity: 2 }], removed: [{ product_id: '999', name: 'Cucumber', quantity: 1 }] }],
+      error: null,
+    };
+
+    expect((await app.request('/routines/instacart-fill/result', fromRoutine(reported))).status).toBe(200);
+
+    expect(saved.get('h1/2026-W46')?.filled).toMatchObject({ kind: 'fill', removed: [{ productId: '999', quantity: 1, name: 'Cucumber' }] });
+    expect([...notAdded.records.keys()]).toEqual(['222']);
   });
 
   it("records a check's read as a check, and counts nothing from it", async () => {

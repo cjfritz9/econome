@@ -49,7 +49,10 @@ export interface HttpDeps extends ShopDeps, Omit<LookupDeps, 'buyList'> {
 const SAID_LENGTH = 500;
 const said = (text: string | null | undefined) => text?.trim().slice(0, SAID_LENGTH) || null;
 
-const FillBody = z.object({ only: z.literal('missing').optional() }).nullable();
+const FillBody = z
+  .object({ only: z.literal('missing').optional(), clear: z.literal(true).optional() })
+  .refine(({ only, clear }) => !(only && clear), { message: 'Send clear or only, not both: a fill that clears the cart first sends every approved product anyway.' })
+  .nullable();
 
 const FillResultSchema = z.object({
   fill_id: z.string(),
@@ -151,7 +154,7 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     return section.approved;
   };
 
-  const startRun = async (c: Context<Env>, kind: RunKind, itemsOf: (section: InstacartSection, weekId: string) => SentItem[]) => {
+  const startRun = async (c: Context<Env>, kind: RunKind, itemsOf: (section: InstacartSection, weekId: string) => SentItem[], clear = kind === 'clear') => {
     if (!fillRoutine) throw new HTTPException(503, { message: "The fill routine isn't set up on this server." });
     const household = c.var.household;
     const week = chooseWeek(household.settings.timezone, dateParam(c));
@@ -162,26 +165,27 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     if (!retailer) throw new HTTPException(409, { message: 'No Instacart store is set for this household.' });
 
     const fillId = newFillId(household.id, week);
-    const run = await routines.fire(fillRoutine, fillRequest(fillId, retailer, items, { clear: kind === 'clear' })).catch((error: unknown) => {
+    const run = await routines.fire(fillRoutine, fillRequest(fillId, retailer, items, { clear })).catch((error: unknown) => {
       logger.error({ err: error, week: week.id, kind }, 'The fill routine would not start');
       throw new HTTPException(502, { message: "Claude's cart routine wouldn't start. Try again in a minute." });
     });
-    const sent = { fillId, sessionId: run.sessionId, by: c.var.uid, error: null, kind, items };
+    const sent = { fillId, sessionId: run.sessionId, by: c.var.uid, error: null, kind, items, clear };
     const saved = kind === 'fill' ? { ...section, sent, filled: null, checkedOut: null, checkouts: checkoutsOf(section) } : { ...section, sent };
     await weeks.saveInstacart(household.id, week.id, saved);
     return c.json({ week: week.id, kind, fillId, items: items.length, run: run.sessionUrl }, 202);
   };
 
   app.post('/api/weeks/:date/instacart/fill', async (c) => {
-    const only = (await jsonBody(c, FillBody))?.only;
-    return startRun(c, 'fill', (section, weekId) => {
+    const { only, clear = false } = (await jsonBody(c, FillBody)) ?? {};
+    const itemsOf = (section: InstacartSection, weekId: string) => {
       const approved = approvedIn(section, weekId);
       if (!only) return combinedLines(approved.lines);
       if (!section.filled) throw new RefusedError("Économe hasn't read this cart yet, so it can't tell what's missing. Check the cart first.");
       const short = shortOf(approved.lines, section.filled.lines);
       if (short.length === 0) throw new RefusedError("Nothing approved is missing from the cart as Économe last read it. Check the cart again if it's changed since.");
       return short;
-    });
+    };
+    return startRun(c, 'fill', itemsOf, clear);
   });
 
   app.post('/api/weeks/:date/instacart/check', async (c) =>
@@ -233,7 +237,7 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
     if (!cart) throw new HTTPException(400, { message: `The result has no cart for ${retailer ?? "the week's store"}.` });
     const lines = cart.lines.map(({ product_id, name, quantity }) => ({ productId: product_id, quantity, name: name ?? null }));
     const at = now().toISOString();
-    const removed = sent.kind === 'clear' ? cart.removed.map(({ product_id, name, quantity }) => ({ productId: product_id, quantity, name: name ?? null })) : null;
+    const removed = sent.clear ? cart.removed.map(({ product_id, name, quantity }) => ({ productId: product_id, quantity, name: name ?? null })) : null;
     const filled = { by: sent.by, lines, fillId: result.fill_id, checkoutUrl: checkoutLink(cart.checkout_url), kind: sent.kind, at, removed };
     const cleared = sent.kind === 'clear' && { checkedOut: null, checkouts: checkoutsOf(section) };
     await weeks.saveInstacart(target.householdId, target.week.id, { ...section, filled, ...cleared });
