@@ -77,7 +77,18 @@ describe('catalogRecipe', () => {
         { step: 2, title: 'Step 2', instruction: 'Divide to bowls', ingredients: null },
       ],
       images: ['https://d219o304zcx1el.cloudfront.net/ai_gen_1.jpg'],
-      nutrition: { kcal: 660, protein: 13, carbs: 59, fat: 42, fiber: 12, proteinPct: 0.079, carbsPct: 0.358, fatPct: 0.573, basis: 'stated' },
+      nutrition: {
+        kcal: 660,
+        protein: 13,
+        carbs: 59,
+        fat: 42,
+        fiber: 12,
+        proteinPct: 0.079,
+        carbsPct: 0.358,
+        netCarbsPct: 0.285,
+        fatPct: 0.573,
+        basis: 'stated',
+      },
       source: { kind: 'hungryroot', id: '1957003', url: link },
       hungryroot: {
         id: 1957003,
@@ -97,6 +108,16 @@ describe('catalogRecipe', () => {
 
     expect(scaled.nutrition?.proteinPct).toBe(catalogRecipe(recipe()).nutrition?.proteinPct);
     expect(noCalories.nutrition).toEqual({ protein: 13, carbs: 59, fat: 42, fiber: 12, basis: 'stated' });
+  });
+
+  it('counts net carbs, carbs less fiber, as a share of calories, never below zero, and only with fiber known', () => {
+    const fibrous = catalogRecipe(recipe({ nutrition: { kcal: 400, protein: 20, carbs: 70, fat: 10, fiber: 40, sugar: 6 } }));
+    const oddFiber = catalogRecipe(recipe({ nutrition: { kcal: 400, protein: 20, carbs: 10, fat: 10, fiber: 12, sugar: 1 } }));
+    const noFiber = catalogRecipe(recipe({ nutrition: { kcal: 400, protein: 20, carbs: 70, fat: 10, fiber: null, sugar: 6 } }));
+
+    expect(fibrous.nutrition?.netCarbsPct).toBe(0.3);
+    expect(oddFiber.nutrition?.netCarbsPct).toBe(0);
+    expect(noFiber.nutrition).not.toHaveProperty('netCarbsPct');
   });
 
   it('always writes featured and gone as booleans, so Mise can query for recipes Hungryroot still sells', () => {
@@ -175,6 +196,7 @@ describe('statesWholeRecipe', () => {
       fiber: 5,
       proteinPct: 0.189,
       carbsPct: 0.396,
+      netCarbsPct: 0.361,
       fatPct: 0.415,
       basis: 'stated',
     });

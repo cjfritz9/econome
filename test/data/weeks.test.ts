@@ -70,6 +70,8 @@ describe('loadWeeks', () => {
     saveHungryroot: async () => {},
     lockBox: async () => {},
     saveInstacart: async () => {},
+    findSuggestions: async () => ({}),
+    saveSuggestions: async () => {},
   });
 
   it('returns every week asked for, empty when nothing is planned', async () => {

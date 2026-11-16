@@ -35,7 +35,7 @@ const setup = ({ answer = (): unknown => ({ picks: [] }), notes = [DIRECTIVE], s
     claude,
     now: () => new Date('2026-11-15T12:00:00Z'),
   });
-  return { service, prompts };
+  return { service, prompts, weeks };
 };
 
 const picks = { picks: [{ id: 'tofu', slot: 'dinner', why: ['tofu'] }, { id: 'nope', slot: 'dinner', why: [] }, { id: 'tempeh', slot: 'dinner', why: ['tempeh'] }] };
@@ -65,6 +65,18 @@ describe('mealSuggestionService', () => {
     expect(prompts).toHaveLength(1);
     expect(result.left).toEqual({ breakfast: 0, lunch: 4, dinner: 8 });
     expect(result.suggestions.map(({ recipeId }) => recipeId)).toEqual(['tempeh']);
+  });
+
+  it("saves the week's ranking, and makes a new one only when asked", async () => {
+    const { service, prompts, weeks } = setup({ answer: () => picks });
+
+    await service.suggest(household, WEEK);
+    await service.suggest(household, WEEK, [{ recipeId: 'tofu' }]);
+    const renewed = await service.suggest(household, WEEK, undefined, { renew: true });
+
+    expect(prompts).toHaveLength(2);
+    expect(renewed.madeAt).toBe('2026-11-15T12:00:00.000Z');
+    expect(weeks.docs.get('2026-W47')?.suggestions).toMatchObject({ meals: { picks: [{ recipeId: 'tofu' }, { recipeId: 'tempeh' }] } });
   });
 
   it('suggests nothing once the week is covered', async () => {

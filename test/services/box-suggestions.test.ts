@@ -45,7 +45,7 @@ const setup = ({ answer = (): unknown => ({ picks: [] }), notes = [DIRECTIVE] } 
     claude,
     now: () => new Date('2026-11-15T12:00:00Z'),
   });
-  return { service, prompts };
+  return { service, prompts, weeks };
 };
 
 describe('boxSuggestionService', () => {
@@ -77,6 +77,45 @@ describe('boxSuggestionService', () => {
 
     const offered = (prompts[0] ?? '').split('\n').filter((line) => line.includes(' | ') && !line.startsWith('Candidates')).map((line) => line.split(' | ')[0]);
     expect(offered.sort()).toEqual(['tempeh-tacos', 'tofu-bowl']);
+  });
+
+  it("saves the week's list, shows it until asked for a new one, and hides recipes added to the box since", async () => {
+    let round = 0;
+    const { service, prompts, weeks } = setup({
+      answer: () => {
+        round += 1;
+        return { picks: [{ id: 'tofu-bowl', why: [`round ${round}`] }, { id: 'tempeh-tacos', why: ['tacos'] }] };
+      },
+    });
+
+    const first = await service.suggest(household, WEEK);
+    weeks.docs.set('2026-W48', { ...weeks.docs.get('2026-W48'), hungryroot: [{ title: 'Recipe tofu-bowl', servings: 4, slug: 'tofu-bowl' }] });
+    const again = await service.suggest(household, WEEK);
+    const renewed = await service.suggest(household, WEEK, { renew: true });
+
+    expect(first).toMatchObject({ madeAt: '2026-11-15T12:00:00.000Z', suggestions: [{ id: 'tofu-bowl', why: ['round 1'] }, { id: 'tempeh-tacos' }] });
+    expect(again.suggestions.map(({ id }) => id)).toEqual(['tempeh-tacos']);
+    expect(prompts).toHaveLength(2);
+    expect(renewed.suggestions.map(({ id }) => id)).toEqual(['tempeh-tacos']);
+    expect(weeks.docs.get('2026-W48')?.suggestions).toMatchObject({ box: { picks: [{ id: 'tofu-bowl', why: ['round 2'] }, { id: 'tempeh-tacos' }] } });
+  });
+
+  it("doesn't save a list it couldn't rank by the directive, so the next look tries again", async () => {
+    let failing = true;
+    const { service, prompts, weeks } = setup({
+      answer: () => {
+        if (failing) throw new Error('spent');
+        return { picks: [{ id: 'tofu-bowl', why: [] }] };
+      },
+    });
+
+    await service.suggest(household, WEEK);
+    failing = false;
+    const later = await service.suggest(household, WEEK);
+
+    expect(prompts).toHaveLength(2);
+    expect(later.rankedBy).toBe('directive');
+    expect(weeks.docs.get('2026-W48')?.suggestions).toMatchObject({ box: { picks: [{ id: 'tofu-bowl' }] } });
   });
 
   it('keeps its picks, so opening the box again asks Claude nothing', async () => {

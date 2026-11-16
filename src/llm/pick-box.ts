@@ -33,7 +33,7 @@ export const pickPrompt = (directive: string, wanted: number, candidates: BoxCan
     '',
     `Recipes the box still needs: ${wanted}`,
     '',
-    'Candidates (id | name | servings | credits | per serving: kcal, protein, carbs, fat, fiber | refined starch, and carbs per serving without it | minutes):',
+    'Candidates (id | name | servings | credits | per serving: kcal, protein, carbs, net carbs (carbs less fiber), sugar, fat, fiber | refined starch, and carbs per serving without it | minutes):',
     ...candidates.map(({ id, line }) => `${id} | ${line}`),
   ].join('\n');
 

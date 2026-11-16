@@ -15,7 +15,7 @@ export interface MiseStep {
   ingredients: null;
 }
 
-export type MiseNutrition = Partial<Record<keyof HungryrootNutrition | 'proteinPct' | 'carbsPct' | 'fatPct', number>> & {
+export type MiseNutrition = Partial<Record<keyof HungryrootNutrition | 'proteinPct' | 'carbsPct' | 'netCarbsPct' | 'fatPct', number>> & {
   basis: 'stated' | 'estimated';
 };
 
@@ -134,7 +134,9 @@ const miseNutrition = (nutrition: HungryrootNutrition | null, divideBy: number):
       return share === undefined ? [] : [[`${macro}Pct`, share]];
     }),
   );
-  return { ...present, ...shares, basis: 'stated' };
+  const netCarbs = present.carbs === undefined || present.fiber === undefined ? undefined : Math.max(0, present.carbs - present.fiber);
+  const netCarbsPct = shareOfCalories(netCarbs, KCAL_PER_GRAM.carbs, present.kcal);
+  return { ...present, ...shares, ...(netCarbsPct !== undefined && { netCarbsPct }), basis: 'stated' };
 };
 
 export const catalogRecipe = (recipe: HungryrootRecipe, products: Map<number, HungryrootProduct> = new Map()): CatalogRecipe => {

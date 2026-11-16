@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import * as z from 'zod';
 import { boxCutoff, chooseWeek, householdToday, openBoxWeek, weeksEndingWith } from '../core/calendar.ts';
@@ -97,14 +97,18 @@ export const planRoutes = (deps: PlanDeps) => {
     return c.json({ ...weekView(saved, household, now()), lookup: lookup && jobView(lookup, now()), warnings });
   });
 
-  routes.post('/weeks/:date/meals/suggestions', async (c) => {
+  const mealSuggestionsFor = async (c: Context<Env>, renew: boolean) => {
     const draft = (await jsonBody(c, DraftBody.nullable()))?.meals;
     const household = c.var.household;
     const date = dateParam(c);
     if (draft) await refuseUnknownRecipes(household.id, draft);
-    const { week, coverage, targets, ...result } = await mealSuggestions.suggest(household, chooseWeek(household.settings.timezone, date), draft);
-    return c.json({ week: weekRef(week), ...result, coverage: coverageView(coverage, targets) });
-  });
+    const week = chooseWeek(household.settings.timezone, date);
+    const { coverage, targets, ...result } = await mealSuggestions.suggest(household, week, draft, { renew });
+    return c.json({ ...result, week: weekRef(week), coverage: coverageView(coverage, targets) });
+  };
+
+  routes.post('/weeks/:date/meals/suggestions', (c) => mealSuggestionsFor(c, false));
+  routes.post('/weeks/:date/meals/suggestions/new', (c) => mealSuggestionsFor(c, true));
 
   routes.get('/calendar', (c) => {
     const { timezone, hungryroot: box = {} } = c.var.household.settings;

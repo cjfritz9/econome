@@ -169,6 +169,15 @@ describe('GET /api/calendar', () => {
   });
 });
 
+describe('POST /api/weeks/:date/hungryroot/suggestions/new', () => {
+  it('answers with a new list for the week', async () => {
+    const { status, body } = await setup({ catalogRecipes: [TIKKA] }).call('POST', `/weeks/${DATE}/hungryroot/suggestions/new`);
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ week: { id: WEEK }, suggestions: [{ id: TIKKA.id }] });
+  });
+});
+
 describe('GET /api/weeks/:date/hungryroot/suggestions', () => {
   it("answers with the week's box suggestions by catalogue id", async () => {
     const { status, body } = await setup({ catalogRecipes: [TIKKA] }).call('GET', `/weeks/${DATE}/hungryroot/suggestions`);

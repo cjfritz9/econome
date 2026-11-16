@@ -42,7 +42,7 @@ export const mealsPrompt = (directive: string, context: MealContext, recipes: { 
       .join(', ')}`,
     `This week's Hungryroot box: ${context.box.length > 0 ? context.box.join('; ') : 'none'}`,
     '',
-    'Recipes (id | title | servings | tags | per serving: kcal, protein, carbs, fat, fiber, and how complete the estimate is | last planned):',
+    'Recipes (id | title | servings | tags | per serving: kcal, protein, carbs, net carbs (carbs less fiber), sugar, fat, fiber, and how complete the estimate is | last planned):',
     ...recipes.map(({ id, line }) => `${id} | ${line}`),
   ].join('\n');
 

@@ -14,7 +14,7 @@ describe('pickPrompt', () => {
         '',
         'Recipes the box still needs: 2',
         '',
-        'Candidates (id | name | servings | credits | per serving: kcal, protein, carbs, fat, fiber | refined starch, and carbs per serving without it | minutes):',
+        'Candidates (id | name | servings | credits | per serving: kcal, protein, carbs, net carbs (carbs less fiber), sugar, fat, fiber | refined starch, and carbs per serving without it | minutes):',
         'tofu-bowl-1 | Tofu Bowl | 4 | 9',
       ].join('\n'),
     );

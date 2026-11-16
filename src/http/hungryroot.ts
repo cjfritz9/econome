@@ -1,4 +1,4 @@
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import * as z from 'zod';
 import { chooseWeek } from '../core/calendar.ts';
@@ -81,11 +81,14 @@ export const hungryrootRoutes = ({ catalog, hungryrootRecipes, weeks, notes, cla
     return c.json(weekView(await savedWeek(household.id, week), household, now()));
   });
 
-  routes.get('/weeks/:date/hungryroot/suggestions', async (c) => {
+  const boxSuggestions = async (c: Context<Env>, renew: boolean) => {
     const household = c.var.household;
-    const { week, ...result } = await suggestions.suggest(household, chooseWeek(household.settings.timezone, dateParam(c)));
+    const { week, ...result } = await suggestions.suggest(household, chooseWeek(household.settings.timezone, dateParam(c)), { renew });
     return c.json({ week: weekRef(week), ...result });
-  });
+  };
+
+  routes.get('/weeks/:date/hungryroot/suggestions', (c) => boxSuggestions(c, false));
+  routes.post('/weeks/:date/hungryroot/suggestions/new', (c) => boxSuggestions(c, true));
 
   routes.post('/weeks/:date/hungryroot/lock', async (c) => {
     const household = c.var.household;

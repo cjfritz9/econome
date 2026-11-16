@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import type { StoredSuggestions, SuggestionKind } from './suggestions.ts';
 import { Weekday, type CalendarWeek } from '../core/calendar.ts';
 import type { HaveAnswer } from '../core/shopping-list.ts';
 import { UNITS } from '../llm/parse-ingredients.ts';
@@ -111,6 +112,8 @@ export interface Weeks {
   saveHungryroot: (householdId: string, weekId: string, hungryroot: HungryrootMeal[], confirmedBy: string) => Promise<void>;
   lockBox: (householdId: string, weekId: string, lockedBy: string) => Promise<void>;
   saveInstacart: (householdId: string, weekId: string, section: InstacartSection) => Promise<void>;
+  findSuggestions: (householdId: string, weekId: string) => Promise<StoredSuggestions>;
+  saveSuggestions: <K extends SuggestionKind>(householdId: string, weekId: string, kind: K, list: NonNullable<StoredSuggestions[K]>) => Promise<void>;
 }
 
 export interface PlannedWeek {

@@ -63,6 +63,8 @@ const setup = ({ sections = {}, fillRoutine = FILL_ROUTINE }: { sections?: Recor
     saveHave: async () => undefined,
     saveHungryroot: async () => undefined,
     lockBox: async () => undefined,
+    findSuggestions: async () => ({}),
+    saveSuggestions: async () => undefined,
     saveInstacart: async (householdId, weekId, section) => {
       saved.set(`${householdId}/${weekId}`, section);
     },

@@ -1,3 +1,4 @@
+import { storedSuggestions } from '../src/data/suggestions.ts';
 import { lineKey } from '../src/core/ingredient-lines.ts';
 import type { ConcernTally } from '../src/core/vegan.ts';
 import type { Decision, Decisions } from '../src/data/decisions.ts';
@@ -164,6 +165,9 @@ export const memoryWeeks = (initial: Record<string, Record<string, unknown>> = {
     saveHungryroot: async (_householdId, weekId, hungryroot) => merge(weekId, { hungryroot }),
     lockBox: async (_householdId, weekId) => merge(weekId, { boxLocked: true }),
     saveInstacart: async (_householdId, weekId, instacart) => merge(weekId, { instacart }),
+    findSuggestions: async (_householdId, weekId) => storedSuggestions(docs.get(weekId)?.suggestions),
+    saveSuggestions: async (_householdId, weekId, kind, list) =>
+      merge(weekId, { suggestions: { ...(docs.get(weekId)?.suggestions as object | undefined), [kind]: list } }),
   };
   return { store, docs };
 };

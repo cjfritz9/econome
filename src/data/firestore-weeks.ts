@@ -1,4 +1,5 @@
 import { FieldValue, Timestamp, type Firestore } from 'firebase-admin/firestore';
+import { storedSuggestions } from './suggestions.ts';
 import type { Weeks } from './weeks.ts';
 
 export const firestoreWeeks = (db: Firestore): Weeks => {
@@ -33,6 +34,12 @@ export const firestoreWeeks = (db: Firestore): Weeks => {
 
     saveInstacart: async (householdId, weekId, section) => {
       await weeks(householdId).doc(weekId).set({ instacart: section }, { mergeFields: ['instacart'] });
+    },
+
+    findSuggestions: async (householdId, weekId) => storedSuggestions((await weeks(householdId).doc(weekId).get()).get('suggestions')),
+
+    saveSuggestions: async (householdId, weekId, kind, list) => {
+      await weeks(householdId).doc(weekId).set({ suggestions: { [kind]: list } }, { merge: true });
     },
 
     lockBox: async (householdId, weekId, lockedBy) => {

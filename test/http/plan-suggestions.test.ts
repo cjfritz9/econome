@@ -24,3 +24,12 @@ describe('POST /api/weeks/:date/meals/suggestions', () => {
     expect(unknown.status).toBe(400);
   });
 });
+
+describe('POST /api/weeks/:date/meals/suggestions/new', () => {
+  it('answers like the suggestions call, with a draft too', async () => {
+    const { status, body } = await setup().call('POST', `/weeks/${DATE}/meals/suggestions/new`, { meals: [] });
+
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ week: { id: WEEK }, coverage: { dinner: { planned: 0 } } });
+  });
+});

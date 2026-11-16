@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
 import { weeksEndingWith, type CalendarWeek } from '../core/calendar.ts';
 import { recipeNutrition } from '../core/nutrition.ts';
 import type { Household } from '../data/household.ts';
 import type { IngredientRegistry } from '../data/ingredients.ts';
 import type { Notes } from '../data/notes.ts';
+import type { MealPick, StoredSuggestions } from '../data/suggestions.ts';
 import { indexByLine, type ParsedLines } from '../data/parsed-lines.ts';
 import { readLibrary, type Recipe, type Recipes } from '../data/recipes.ts';
 import { withDefaults } from '../data/settings.ts';
@@ -21,10 +21,9 @@ import {
   type Weeks,
 } from '../data/weeks.ts';
 import type { Claude } from '../llm/claude.ts';
-import { MEALS_SYSTEM, mealsPrompt, pickMeals, type MealContext } from '../llm/pick-meals.ts';
+import { pickMeals, type MealContext } from '../llm/pick-meals.ts';
 import { logger } from '../logger.ts';
 
-const PICKS_KEPT_MS = 6 * 60 * 60 * 1000;
 const MOST_MEAL_PICKS = 8;
 const BREAKFAST_TAG = 'breakfast';
 
@@ -38,12 +37,7 @@ export interface MealSuggestionDeps {
   now?: () => Date;
 }
 
-export interface MealSuggestion {
-  recipeId: string;
-  slot: MealSlot;
-  servings: number;
-  why: string[];
-}
+export type MealSuggestion = MealPick;
 
 export interface MealSuggestions {
   week: CalendarWeek;
@@ -52,6 +46,7 @@ export interface MealSuggestions {
   targets: MealTargets;
   left: Record<MealSlot, number>;
   rankedBy: 'directive' | 'protein';
+  madeAt: string | null;
   directive: string;
   warning?: string;
   suggestions: MealSuggestion[];
@@ -69,7 +64,7 @@ const round = (value: number) => Math.round(value);
 const candidateOf = (recipe: Recipe, facts: ReturnType<typeof recipeNutrition>, lastPlanned: string | undefined): Candidate => {
   const n = facts.perServing;
   const nutrition = n
-    ? `${round(n.kcal)} kcal, ${round(n.protein)} g, ${round(n.carbs)} g, ${round(n.fat)} g, ${round(n.fiber)} g (${facts.estimate})`
+    ? `${round(n.kcal)} kcal, ${round(n.protein)} g, ${round(n.carbs)} g, ${round(Math.max(0, n.carbs - n.fiber))} g, ${round(n.sugar)} g, ${round(n.fat)} g, ${round(n.fiber)} g (${facts.estimate})`
     : 'no estimate yet';
   return {
     recipe,
@@ -83,16 +78,16 @@ const slotFor = (recipe: Recipe, left: Record<MealSlot, number>): MealSlot =>
   recipe.tags.some((tag) => tag.toLowerCase() === BREAKFAST_TAG) && left.breakfast > 0 ? 'breakfast' : 'dinner';
 
 export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients, notes, claude, now = () => new Date() }: MealSuggestionDeps) => {
-  const kept = new Map<string, { at: number; ranked: MealSuggestion[] }>();
 
-  const suggest = async (household: Household, week: CalendarWeek, draft?: MealRequest[]): Promise<MealSuggestions> => {
+  const suggest = async (household: Household, week: CalendarWeek, draft?: MealRequest[], { renew = false } = {}): Promise<MealSuggestions> => {
     const settings = withDefaults(household.settings);
-    const [docs, planned, lines, entries, allNotes] = await Promise.all([
+    const [docs, planned, lines, entries, allNotes, stored] = await Promise.all([
       recipes.listRecipeDocs(household.id),
       loadWeeks(weeks, household.id, weeksEndingWith(week, RECENT_WEEKS)),
       parsedLines.list(household.id),
       ingredients.list(household.id),
       notes.list(household.id),
+      renew ? Promise.resolve<StoredSuggestions>({}) : weeks.findSuggestions(household.id, week.id),
     ]);
     const library = readLibrary(docs);
     const thisWeek = planned.find(({ week: { id } }) => id === week.id) ?? { week, ...emptyWeek() };
@@ -117,9 +112,12 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
         ? []
         : suggestions.filter(({ recipeId }) => !inWeek.has(recipeId)).slice(0, MOST_MEAL_PICKS);
 
+    if (stored.meals) return { ...base, rankedBy: 'directive', madeAt: stored.meals.madeAt, suggestions: shown(stored.meals.picks) };
+
     const byProtein = (warning: string): MealSuggestions => ({
       ...base,
       rankedBy: 'protein',
+      madeAt: null,
       warning,
       suggestions: shown(
         candidates
@@ -129,17 +127,10 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
       ),
     });
     if (!directive) return byProtein(`There's no planning directive at ${settings.planningDirective}, so these are ranked by protein per calorie.`);
-    if (Object.values(afterBox).every((servings) => servings === 0)) return { ...base, rankedBy: 'directive', suggestions: [] };
+    if (Object.values(afterBox).every((servings) => servings === 0)) return { ...base, rankedBy: 'directive', madeAt: null, suggestions: [] };
 
     const context: MealContext = { people, left: afterBox, box: thisWeek.hungryroot.map(({ title }) => title) };
     const recipeLines = candidates.map(({ recipe, line }) => ({ id: recipe.id, line }));
-    const key = createHash('sha256')
-      .update(JSON.stringify([household.id, MEALS_SYSTEM, mealsPrompt(directive.content, context, recipeLines)]))
-      .digest('hex');
-    const remembered = kept.get(key);
-    if (remembered && now().getTime() - remembered.at < PICKS_KEPT_MS) {
-      return { ...base, rankedBy: 'directive', suggestions: shown(remembered.ranked) };
-    }
 
     try {
       const byId = new Map(candidates.map((candidate) => [candidate.recipe.id, candidate]));
@@ -151,8 +142,9 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
         seen.add(id);
         return [{ recipeId: id, slot, servings: candidate.recipe.servings, why: why.slice(0, 2) }];
       });
-      kept.set(key, { at: now().getTime(), ranked });
-      return { ...base, rankedBy: 'directive', suggestions: shown(ranked) };
+      const madeAt = now().toISOString();
+      await weeks.saveSuggestions(household.id, week.id, 'meals', { madeAt, picks: ranked });
+      return { ...base, rankedBy: 'directive', madeAt, suggestions: shown(ranked) };
     } catch (error) {
       logger.warn({ err: error, week: week.id }, "Claude couldn't rank the meal suggestions; ranking by protein instead");
       return byProtein("Économe couldn't rank these by your planning directive just now, so they're ranked by protein per calorie.");

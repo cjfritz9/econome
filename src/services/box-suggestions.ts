@@ -1,10 +1,10 @@
-import { createHash } from 'node:crypto';
 import { weeksEndingWith, type CalendarWeek } from '../core/calendar.ts';
-import { boxCandidates, rankCandidates, sameName, type BoxCandidate } from '../core/hungryroot-box.ts';
+import { boxCandidates, rankCandidates, type BoxCandidate } from '../core/hungryroot-box.ts';
 import { fromCatalog } from '../core/hungryroot-translate.ts';
 import type { Household } from '../data/household.ts';
 import type { HungryrootCatalogStore, StoredCatalogRecipe } from '../data/hungryroot-catalog.ts';
 import type { Notes } from '../data/notes.ts';
+import type { BoxPick, StoredSuggestions } from '../data/suggestions.ts';
 import { withDefaults } from '../data/settings.ts';
 import { loadWeeks, type Weeks } from '../data/weeks.ts';
 import type { Claude } from '../llm/claude.ts';
@@ -17,7 +17,6 @@ const MIN_PROTEIN = 25;
 const RECENT_BOX_WEEKS = 4;
 const SERVINGS_PER_RECIPE = 4;
 const DEFAULT_BOX_SERVINGS = 12;
-const PICKS_KEPT_MS = 6 * 60 * 60 * 1000;
 
 export interface BoxSuggestionDeps {
   catalog: Pick<HungryrootCatalogStore, 'recentRuns' | 'allRecipes' | 'allProducts'>;
@@ -27,14 +26,7 @@ export interface BoxSuggestionDeps {
   now?: () => Date;
 }
 
-export interface Suggestion {
-  id: string;
-  times: number;
-  servings: number;
-  credits: number;
-  why: string[];
-  swap?: { remove: string[]; carbsAfter: number };
-}
+export type Suggestion = BoxPick;
 
 export interface BoxSuggestions {
   week: CalendarWeek;
@@ -42,6 +34,7 @@ export interface BoxSuggestions {
   chosenServings: number;
   wanted: number;
   rankedBy: 'directive' | 'protein';
+  madeAt: string | null;
   directive: string;
   warning?: string;
   suggestions: Suggestion[];
@@ -56,7 +49,7 @@ const candidateLine = ({ recipe, times, credits, starch, carbsWithoutStarch }: B
     recipe.name,
     times === 2 ? `${recipe.servings} added twice` : `${recipe.servings}`,
     `${credits}`,
-    `${round(n?.kcal)} kcal, ${round(n?.protein)} g, ${round(n?.carbs)} g, ${round(n?.fat)} g, ${round(n?.fiber)} g`,
+    `${round(n?.kcal)} kcal, ${round(n?.protein)} g, ${round(n?.carbs)} g, ${round(Math.max(0, (n?.carbs ?? 0) - (n?.fiber ?? 0)))} g, ${round(n?.sugar)} g, ${round(n?.fat)} g, ${round(n?.fiber)} g`,
     swap,
     `${recipe.minutes ?? '?'} min`,
   ].join(' | ');
@@ -76,7 +69,6 @@ const suggestionOf = (candidate: BoxCandidate, why: string[]): Suggestion => ({
 
 export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () => new Date() }: BoxSuggestionDeps) => {
   let copy: { runAt: number; recipes: StoredCatalogRecipe[]; products: HungryrootProduct[] } | null = null;
-  const kept = new Map<string, { at: number; result: BoxSuggestions }>();
 
   const currentCopy = async () => {
     const [latest] = await catalog.recentRuns(1);
@@ -88,48 +80,45 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
     return copy;
   };
 
-  const suggest = async (household: Household, week: CalendarWeek): Promise<BoxSuggestions> => {
+  const suggest = async (household: Household, week: CalendarWeek, { renew = false } = {}): Promise<BoxSuggestions> => {
     const settings = withDefaults(household.settings);
-    const [current, planned, allNotes] = await Promise.all([
-      currentCopy(),
+    const [planned, allNotes, stored] = await Promise.all([
       loadWeeks(weeks, household.id, weeksEndingWith(week, RECENT_BOX_WEEKS + 1)),
       notes.list(household.id),
+      renew ? Promise.resolve<StoredSuggestions>({}) : weeks.findSuggestions(household.id, week.id),
     ]);
     const box = planned.find(({ week: { id } }) => id === week.id)?.hungryroot ?? [];
-    const leaveOut = planned.flatMap(({ hungryroot }) => hungryroot.map(({ title }) => title));
     const boxServings = settings.hungryroot?.boxServings ?? DEFAULT_BOX_SERVINGS;
     const chosenServings = box.reduce((sum, { servings }) => sum + servings, 0);
     const wanted = Math.max(0, Math.round((boxServings - chosenServings) / SERVINGS_PER_RECIPE));
     const directive = allNotes.find(({ path }) => path === settings.planningDirective);
+    const base = { week, boxServings, chosenServings, wanted, directive: settings.planningDirective };
+    const inBox = new Set(box.flatMap(({ slug }) => slug ?? []));
+    const shown = (picks: Suggestion[]) => picks.filter(({ id }) => !inBox.has(id)).slice(0, MOST_PICKS);
 
-    const offered = current.recipes
-      .filter(({ hungryroot }) => hungryroot.featured && !hungryroot.gone)
-      .map(fromCatalog);
+    if (stored.box) return { ...base, rankedBy: 'directive', madeAt: stored.box.madeAt, suggestions: shown(stored.box.picks) };
+
+    const current = await currentCopy();
+    const offered = current.recipes.filter(({ hungryroot }) => hungryroot.featured && !hungryroot.gone).map(fromCatalog);
     const ranked = rankCandidates(
       boxCandidates(
         offered.filter(({ servings }) => servings === 4),
         offered.filter(({ servings }) => servings === 2),
         current.products,
       ),
-      { minProtein: MIN_PROTEIN, exclude: leaveOut },
+      { minProtein: MIN_PROTEIN, exclude: planned.flatMap(({ hungryroot }) => hungryroot.map(({ title }) => title)) },
     );
     const shortlist = ranked.slice(0, SHORTLIST);
-    const base = { week, boxServings, chosenServings, wanted, directive: settings.planningDirective };
-
-    const key = createHash('sha256')
-      .update(JSON.stringify([household.id, week.id, current.runAt, leaveOut.map(sameName).sort(), wanted, directive?.updatedAt ?? null]))
-      .digest('hex');
-    const remembered = kept.get(key);
-    if (remembered && now().getTime() - remembered.at < PICKS_KEPT_MS) return remembered.result;
 
     const byProtein = (warning: string): BoxSuggestions => ({
       ...base,
       rankedBy: 'protein',
+      madeAt: null,
       warning,
-      suggestions: shortlist.slice(0, MOST_PICKS).map((candidate) => suggestionOf(candidate, [])),
+      suggestions: shown(shortlist.map((candidate) => suggestionOf(candidate, []))),
     });
     if (!directive) return byProtein(`There's no planning directive at ${settings.planningDirective}, so these are ranked by protein per calorie.`);
-    if (shortlist.length === 0) return { ...base, rankedBy: 'directive', suggestions: [] };
+    if (shortlist.length === 0) return { ...base, rankedBy: 'directive', madeAt: null, suggestions: [] };
 
     try {
       const byId = new Map(shortlist.map((candidate) => [candidate.recipe.slug, candidate]));
@@ -141,15 +130,17 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
         shortlist.map((candidate) => ({ id: candidate.recipe.slug, line: candidateLine(candidate) })),
       );
       const seen = new Set<string>();
-      const suggestions = picks.flatMap(({ id, why }) => {
-        const candidate = byId.get(id);
-        if (!candidate || seen.has(id)) return [];
-        seen.add(id);
-        return [suggestionOf(candidate, why.slice(0, 2))];
-      });
-      const result: BoxSuggestions = { ...base, rankedBy: 'directive', suggestions: suggestions.slice(0, MOST_PICKS) };
-      kept.set(key, { at: now().getTime(), result });
-      return result;
+      const made = picks
+        .flatMap(({ id, why }) => {
+          const candidate = byId.get(id);
+          if (!candidate || seen.has(id)) return [];
+          seen.add(id);
+          return [suggestionOf(candidate, why.slice(0, 2))];
+        })
+        .slice(0, MOST_PICKS);
+      const madeAt = now().toISOString();
+      await weeks.saveSuggestions(household.id, week.id, 'box', { madeAt, picks: made });
+      return { ...base, rankedBy: 'directive', madeAt, suggestions: shown(made) };
     } catch (error) {
       logger.warn({ err: error, week: week.id }, "Claude couldn't rank the box suggestions; ranking by protein instead");
       return byProtein("Économe couldn't rank these by your planning directive just now, so they're ranked by protein per calorie.");
