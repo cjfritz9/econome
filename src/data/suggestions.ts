@@ -17,7 +17,8 @@ export const MealPickSchema = z.object({
   why: z.array(z.string()),
 });
 
-const listOf = <T extends z.ZodType>(pick: T) => z.object({ madeAt: z.string(), picks: z.array(pick) });
+const listOf = <T extends z.ZodType>(pick: T) =>
+  z.object({ madeAt: z.string(), picks: z.array(pick), seen: z.array(z.string()).default([]) });
 
 export const StoredSuggestionsSchema = z.object({
   box: listOf(BoxPickSchema).optional(),

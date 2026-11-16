@@ -1,10 +1,10 @@
 import { weeksEndingWith, type CalendarWeek } from '../core/calendar.ts';
-import { boxCandidates, rankCandidates, type BoxCandidate } from '../core/hungryroot-box.ts';
+import { boxCandidates, dishOf, distinctDishes, rankCandidates, type BoxCandidate } from '../core/hungryroot-box.ts';
 import { fromCatalog } from '../core/hungryroot-translate.ts';
 import type { Household } from '../data/household.ts';
 import type { HungryrootCatalogStore, StoredCatalogRecipe } from '../data/hungryroot-catalog.ts';
 import type { Notes } from '../data/notes.ts';
-import type { BoxPick, StoredSuggestions } from '../data/suggestions.ts';
+import type { BoxPick } from '../data/suggestions.ts';
 import { withDefaults } from '../data/settings.ts';
 import { loadWeeks, type Weeks } from '../data/weeks.ts';
 import type { Claude } from '../llm/claude.ts';
@@ -85,7 +85,7 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
     const [planned, allNotes, stored] = await Promise.all([
       loadWeeks(weeks, household.id, weeksEndingWith(week, RECENT_BOX_WEEKS + 1)),
       notes.list(household.id),
-      renew ? Promise.resolve<StoredSuggestions>({}) : weeks.findSuggestions(household.id, week.id),
+      weeks.findSuggestions(household.id, week.id),
     ]);
     const box = planned.find(({ week: { id } }) => id === week.id)?.hungryroot ?? [];
     const boxServings = settings.hungryroot?.boxServings ?? DEFAULT_BOX_SERVINGS;
@@ -96,7 +96,8 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
     const inBox = new Set(box.flatMap(({ slug }) => slug ?? []));
     const shown = (picks: Suggestion[]) => picks.filter(({ id }) => !inBox.has(id)).slice(0, MOST_PICKS);
 
-    if (stored.box) return { ...base, rankedBy: 'directive', madeAt: stored.box.madeAt, suggestions: shown(stored.box.picks) };
+    if (stored.box && !renew) return { ...base, rankedBy: 'directive', madeAt: stored.box.madeAt, suggestions: shown(stored.box.picks) };
+    const shownBefore = renew && stored.box ? new Set([...stored.box.seen, ...stored.box.picks.map(({ id }) => id)]) : new Set<string>();
 
     const current = await currentCopy();
     const offered = current.recipes.filter(({ hungryroot }) => hungryroot.featured && !hungryroot.gone).map(fromCatalog);
@@ -108,7 +109,17 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
       ),
       { minProtein: MIN_PROTEIN, exclude: planned.flatMap(({ hungryroot }) => hungryroot.map(({ title }) => title)) },
     );
-    const shortlist = ranked.slice(0, SHORTLIST);
+    const productsById = new Map(current.products.map((product) => [product.id, product]));
+    const dish = ({ recipe }: BoxCandidate) => dishOf(recipe, productsById);
+    const shownDishes = offered.filter(({ slug }) => shownBefore.has(slug)).map((recipe) => dishOf(recipe, productsById));
+    const unseen = distinctDishes(
+      ranked.filter(({ recipe }) => !shownBefore.has(recipe.slug)),
+      dish,
+      shownDishes,
+    );
+    const startOver = unseen.length === 0;
+    const shortlist = (startOver ? distinctDishes(ranked, dish) : unseen).slice(0, SHORTLIST);
+    const seenIds = startOver ? [] : [...shownBefore];
 
     const byProtein = (warning: string): BoxSuggestions => ({
       ...base,
@@ -139,7 +150,7 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
         })
         .slice(0, MOST_PICKS);
       const madeAt = now().toISOString();
-      await weeks.saveSuggestions(household.id, week.id, 'box', { madeAt, picks: made });
+      await weeks.saveSuggestions(household.id, week.id, 'box', { madeAt, picks: made, seen: seenIds });
       return { ...base, rankedBy: 'directive', madeAt, suggestions: shown(made) };
     } catch (error) {
       logger.warn({ err: error, week: week.id }, "Claude couldn't rank the box suggestions; ranking by protein instead");

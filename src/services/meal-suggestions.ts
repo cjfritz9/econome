@@ -3,7 +3,7 @@ import { recipeNutrition } from '../core/nutrition.ts';
 import type { Household } from '../data/household.ts';
 import type { IngredientRegistry } from '../data/ingredients.ts';
 import type { Notes } from '../data/notes.ts';
-import type { MealPick, StoredSuggestions } from '../data/suggestions.ts';
+import type { MealPick } from '../data/suggestions.ts';
 import { indexByLine, type ParsedLines } from '../data/parsed-lines.ts';
 import { readLibrary, type Recipe, type Recipes } from '../data/recipes.ts';
 import { withDefaults } from '../data/settings.ts';
@@ -87,7 +87,7 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
       parsedLines.list(household.id),
       ingredients.list(household.id),
       notes.list(household.id),
-      renew ? Promise.resolve<StoredSuggestions>({}) : weeks.findSuggestions(household.id, week.id),
+      weeks.findSuggestions(household.id, week.id),
     ]);
     const library = readLibrary(docs);
     const thisWeek = planned.find(({ week: { id } }) => id === week.id) ?? { week, ...emptyWeek() };
@@ -112,7 +112,12 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
         ? []
         : suggestions.filter(({ recipeId }) => !inWeek.has(recipeId)).slice(0, MOST_MEAL_PICKS);
 
-    if (stored.meals) return { ...base, rankedBy: 'directive', madeAt: stored.meals.madeAt, suggestions: shown(stored.meals.picks) };
+    if (stored.meals && !renew) return { ...base, rankedBy: 'directive', madeAt: stored.meals.madeAt, suggestions: shown(stored.meals.picks) };
+    const shownBefore = renew && stored.meals ? new Set([...stored.meals.seen, ...stored.meals.picks.map(({ recipeId }) => recipeId)]) : new Set<string>();
+    const unseen = candidates.filter(({ recipe }) => !shownBefore.has(recipe.id) && !inWeek.has(recipe.id));
+    const startOver = unseen.length === 0;
+    const offered = startOver ? candidates : candidates.filter(({ recipe }) => !shownBefore.has(recipe.id));
+    const seenIds = startOver ? [] : [...shownBefore];
 
     const byProtein = (warning: string): MealSuggestions => ({
       ...base,
@@ -130,10 +135,10 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
     if (Object.values(afterBox).every((servings) => servings === 0)) return { ...base, rankedBy: 'directive', madeAt: null, suggestions: [] };
 
     const context: MealContext = { people, left: afterBox, box: thisWeek.hungryroot.map(({ title }) => title) };
-    const recipeLines = candidates.map(({ recipe, line }) => ({ id: recipe.id, line }));
+    const recipeLines = offered.map(({ recipe, line }) => ({ id: recipe.id, line }));
 
     try {
-      const byId = new Map(candidates.map((candidate) => [candidate.recipe.id, candidate]));
+      const byId = new Map(offered.map((candidate) => [candidate.recipe.id, candidate]));
       const picks = await pickMeals(claude, household, directive.content, context, recipeLines);
       const seen = new Set<string>();
       const ranked = picks.flatMap(({ id, slot, why }) => {
@@ -143,7 +148,7 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
         return [{ recipeId: id, slot, servings: candidate.recipe.servings, why: why.slice(0, 2) }];
       });
       const madeAt = now().toISOString();
-      await weeks.saveSuggestions(household.id, week.id, 'meals', { madeAt, picks: ranked });
+      await weeks.saveSuggestions(household.id, week.id, 'meals', { madeAt, picks: ranked, seen: seenIds });
       return { ...base, rankedBy: 'directive', madeAt, suggestions: shown(ranked) };
     } catch (error) {
       logger.warn({ err: error, week: week.id }, "Claude couldn't rank the meal suggestions; ranking by protein instead");

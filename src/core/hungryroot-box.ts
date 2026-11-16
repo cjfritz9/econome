@@ -67,6 +67,44 @@ export const starchIn = (recipe: HungryrootRecipe, products: Map<number, Hungryr
     return carbs === null ? [] : [{ product: use.name, carbs: round(carbs), credits: use.credits * use.amount }];
   });
 
+const DEFINING_CATEGORIES = new Set(['Plant-Based Proteins', 'Sauces + Condiments']);
+const SAME_PRODUCTS = 0.6;
+
+export interface Dish {
+  products: Set<string>;
+  defining: string;
+}
+
+const plainProduct = (name: string) => sameName(name.replace(/\borganic\b/gi, ''));
+
+export const dishOf = (recipe: HungryrootRecipe, products: Map<number, HungryrootProduct>): Dish => ({
+  products: new Set(recipe.products.map(({ name }) => plainProduct(name))),
+  defining: [
+    ...new Set(
+      recipe.products.filter(({ id }) => DEFINING_CATEGORIES.has(products.get(id)?.category ?? '')).map(({ name }) => plainProduct(name)),
+    ),
+  ]
+    .sort()
+    .join(' | '),
+});
+
+const overlap = (a: Set<string>, b: Set<string>) => {
+  const shared = [...a].filter((name) => b.has(name)).length;
+  return shared / (a.size + b.size - shared || 1);
+};
+
+export const sameDish = (a: Dish, b: Dish) => (a.defining !== '' && a.defining === b.defining) || overlap(a.products, b.products) >= SAME_PRODUCTS;
+
+export const distinctDishes = <T>(items: T[], dish: (item: T) => Dish, already: Dish[] = []): T[] => {
+  const kept: Dish[] = [...already];
+  return items.filter((item) => {
+    const mine = dish(item);
+    if (kept.some((other) => sameDish(mine, other))) return false;
+    kept.push(mine);
+    return true;
+  });
+};
+
 export const boxCandidates = (
   forFour: HungryrootRecipe[],
   forTwo: HungryrootRecipe[],

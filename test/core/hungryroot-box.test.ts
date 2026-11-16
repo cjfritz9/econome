@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { boxCandidates, findRecipe, rankCandidates, recipeRecord, sameName, starchIn } from '../../src/core/hungryroot-box.ts';
+import { boxCandidates, dishOf, distinctDishes, findRecipe, rankCandidates, recipeRecord, sameDish, sameName, starchIn } from '../../src/core/hungryroot-box.ts';
 import type { HungryrootProduct, HungryrootRecipe } from '../../src/sources/hungryroot.ts';
 
 const product = (id: number, name: string, category: string, carbs: number, servings = 1): HungryrootProduct => ({
@@ -152,5 +152,42 @@ describe('recipeRecord', () => {
       { week: '2026-W47', removed: [], added: [] },
       { week: '2026-W49', ...swaps },
     ]);
+  });
+});
+
+describe('dishOf and sameDish', () => {
+  const catalog = new Map<number, HungryrootProduct>([
+    [10, { ...product(10, 'Japanese Teriyaki Saucy Tofu', 'Plant-Based Proteins', 6) }],
+    [11, { ...product(11, 'Italian Herb Burger', 'Plant-Based Proteins', 2) }],
+    [12, { ...product(12, 'Spicy Vindaloo Simmer Sauce', 'Sauces + Condiments', 10) }],
+    [13, { ...product(13, 'Lemon Dill Hummus', 'Sauces + Condiments', 8) }],
+    [20, { ...product(20, 'Green Bell Pepper', 'Produce', 4) }],
+    [21, { ...product(21, 'Sweet Baby Broccoli', 'Produce', 4) }],
+    [22, { ...product(22, 'Broccoli Florets', 'Produce', 4) }],
+    [23, { ...product(23, 'Organic Broccoli Florets', 'Produce', 4) }],
+  ]);
+  const made = (id: number, ...productIds: number[]) =>
+    recipe(id, `Recipe ${id}`, 4, { uses: productIds.map((productId) => catalog.get(productId) as HungryrootProduct) });
+  const dish = (r: HungryrootRecipe) => dishOf(r, catalog);
+
+  it('counts the same protein with the same sauce as one dish, whatever the vegetables', () => {
+    expect(sameDish(dish(made(1, 10, 20)), dish(made(2, 10, 21)))).toBe(true);
+  });
+
+  it('tells the same protein apart by its sauce', () => {
+    expect(sameDish(dish(made(1, 11, 12, 22)), dish(made(2, 11, 13, 22)))).toBe(false);
+  });
+
+  it('counts an organic version of the same products as the same dish', () => {
+    expect(sameDish(dish(made(1, 20, 22)), dish(made(2, 20, 23)))).toBe(true);
+  });
+
+  it('keeps the first of each dish, and leaves out dishes already shown', () => {
+    const teriyakiPepper = made(1, 10, 20);
+    const teriyakiBroccoli = made(2, 10, 21);
+    const burger = made(3, 11, 12, 22);
+
+    expect(distinctDishes([teriyakiPepper, teriyakiBroccoli, burger], dish).map(({ id }) => id)).toEqual([1, 3]);
+    expect(distinctDishes([teriyakiBroccoli, burger], dish, [dish(teriyakiPepper)]).map(({ id }) => id)).toEqual([3]);
   });
 });

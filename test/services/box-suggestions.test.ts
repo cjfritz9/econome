@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { CalendarWeek } from '../../src/core/calendar.ts';
 import type { Household } from '../../src/data/household.ts';
 import type { StoredCatalogRecipe } from '../../src/data/hungryroot-catalog.ts';
+import type { HungryrootProduct } from '../../src/sources/hungryroot.ts';
 import { boxSuggestionService } from '../../src/services/box-suggestions.ts';
 import { answeringClaude, memoryNotes, memoryWeeks } from '../fakes.ts';
 
@@ -32,14 +33,25 @@ const CATALOG = [
   recipe('this-weeks-noodles', 4, { title: 'This Week Noodles' }),
 ];
 
-const setup = ({ answer = (): unknown => ({ picks: [] }), notes = [DIRECTIVE] } = {}) => {
+const offeredIn = (prompt: string) =>
+  prompt
+    .split('\n')
+    .filter((line) => line.includes(' | ') && !line.startsWith('Candidates'))
+    .map((line) => line.split(' | ')[0] ?? '');
+
+const setup = ({
+  answer = (): unknown => ({ picks: [] }) as unknown,
+  notes = [DIRECTIVE],
+  catalog = CATALOG,
+  products = [] as HungryrootProduct[],
+}: { answer?: (prompt: string) => unknown; notes?: (typeof DIRECTIVE)[]; catalog?: StoredCatalogRecipe[]; products?: HungryrootProduct[] } = {}) => {
   const { claude, prompts } = answeringClaude(answer);
   const weeks = memoryWeeks({
     '2026-W47': { hungryroot: [{ title: 'Last Week Burger', servings: 4 }] },
     '2026-W48': { hungryroot: [{ title: 'This Week Noodles', servings: 4 }] },
   });
   const service = boxSuggestionService({
-    catalog: { recentRuns: async () => [], allRecipes: async () => CATALOG, allProducts: async () => [] },
+    catalog: { recentRuns: async () => [], allRecipes: async () => catalog, allProducts: async () => products },
     weeks: weeks.store,
     notes: memoryNotes(notes).store,
     claude,
@@ -80,24 +92,59 @@ describe('boxSuggestionService', () => {
   });
 
   it("saves the week's list, shows it until asked for a new one, and hides recipes added to the box since", async () => {
-    let round = 0;
-    const { service, prompts, weeks } = setup({
-      answer: () => {
-        round += 1;
-        return { picks: [{ id: 'tofu-bowl', why: [`round ${round}`] }, { id: 'tempeh-tacos', why: ['tacos'] }] };
-      },
+    const { service, prompts, weeks } = setup({ answer: (prompt: string) => ({ picks: offeredIn(prompt).map((id) => ({ id, why: [] })) }) });
+
+    const first = await service.suggest(household, WEEK);
+    weeks.docs.set('2026-W48', { ...weeks.docs.get('2026-W48'), hungryroot: [{ title: 'This Week Noodles', servings: 4, slug: 'tofu-bowl' }] });
+    const again = await service.suggest(household, WEEK);
+
+    expect(first).toMatchObject({ madeAt: '2026-11-15T12:00:00.000Z' });
+    expect(first.suggestions.map(({ id }) => id).sort()).toEqual(['tempeh-tacos', 'tofu-bowl']);
+    expect(again.suggestions.map(({ id }) => id)).toEqual(['tempeh-tacos']);
+    expect(prompts).toHaveLength(1);
+  });
+
+  it('makes each new list from recipes not shown before that week, and starts over once none are left', async () => {
+    const { service, weeks } = setup({ answer: (prompt: string) => ({ picks: offeredIn(prompt).slice(0, 1).map((id) => ({ id, why: [] })) }) });
+
+    const lists = [];
+    for (const renew of [false, true, true]) lists.push((await service.suggest(household, WEEK, { renew })).suggestions.map(({ id }) => id));
+
+    expect(lists[0]).toHaveLength(1);
+    expect(lists[1]).toHaveLength(1);
+    expect(lists[1]).not.toEqual(lists[0]);
+    expect(lists[2]).toEqual(lists[0]);
+    expect(weeks.docs.get('2026-W48')?.suggestions).toMatchObject({ box: { seen: [] } });
+  });
+
+  it('leaves out other versions of a dish already shown when making a new list', async () => {
+    const tofu: HungryrootProduct = {
+      id: 10,
+      name: 'Japanese Teriyaki Saucy Tofu',
+      brand: 'Hungryroot',
+      credits: 3,
+      category: 'Plant-Based Proteins',
+      servings: 4,
+      servingSize: null,
+      perServing: null,
+      ingredients: null,
+      dietaryTags: [],
+    };
+    const withTofu = (id: string, protein: number) => {
+      const made = recipe(id, 4, { protein });
+      return { ...made, hungryroot: { ...made.hungryroot, products: [{ id: 10, name: tofu.name, brand: 'Hungryroot', amount: 1, credits: 3 }] } };
+    };
+    const { service } = setup({
+      catalog: [withTofu('teriyaki-peppers', 36), withTofu('teriyaki-broccoli', 35), recipe('tempeh-tacos', 2, { protein: 30 })],
+      products: [tofu],
+      answer: (prompt: string) => ({ picks: offeredIn(prompt).slice(0, 1).map((id) => ({ id, why: [] })) }),
     });
 
     const first = await service.suggest(household, WEEK);
-    weeks.docs.set('2026-W48', { ...weeks.docs.get('2026-W48'), hungryroot: [{ title: 'Recipe tofu-bowl', servings: 4, slug: 'tofu-bowl' }] });
-    const again = await service.suggest(household, WEEK);
-    const renewed = await service.suggest(household, WEEK, { renew: true });
+    const next = await service.suggest(household, WEEK, { renew: true });
 
-    expect(first).toMatchObject({ madeAt: '2026-11-15T12:00:00.000Z', suggestions: [{ id: 'tofu-bowl', why: ['round 1'] }, { id: 'tempeh-tacos' }] });
-    expect(again.suggestions.map(({ id }) => id)).toEqual(['tempeh-tacos']);
-    expect(prompts).toHaveLength(2);
-    expect(renewed.suggestions.map(({ id }) => id)).toEqual(['tempeh-tacos']);
-    expect(weeks.docs.get('2026-W48')?.suggestions).toMatchObject({ box: { picks: [{ id: 'tofu-bowl', why: ['round 2'] }, { id: 'tempeh-tacos' }] } });
+    expect(first.suggestions.map(({ id }) => id)).toEqual(['teriyaki-peppers']);
+    expect(next.suggestions.map(({ id }) => id)).toEqual(['tempeh-tacos']);
   });
 
   it("doesn't save a list it couldn't rank by the directive, so the next look tries again", async () => {
