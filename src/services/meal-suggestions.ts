@@ -125,12 +125,7 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
         candidates
           .filter(({ protein, kcal }) => protein !== null && kcal)
           .sort((a, b) => (b.protein ?? 0) / (b.kcal ?? 1) - (a.protein ?? 0) / (a.kcal ?? 1))
-          .map(({ recipe, protein }) => ({
-            recipeId: recipe.id,
-            slot: slotFor(recipe, afterBox),
-            servings: recipe.servings,
-            why: [`${protein} g protein a serving`, before.has(recipe.id) ? `last planned ${before.get(recipe.id)}` : 'not planned yet'],
-          })),
+          .map(({ recipe }) => ({ recipeId: recipe.id, slot: slotFor(recipe, afterBox), servings: recipe.servings, why: [] })),
       ),
     });
     if (!directive) return byProtein(`There's no planning directive at ${settings.planningDirective}, so these are ranked by protein per calorie.`);
@@ -154,7 +149,7 @@ export const mealSuggestionService = ({ recipes, weeks, parsedLines, ingredients
         const candidate = byId.get(id);
         if (!candidate || seen.has(id)) return [];
         seen.add(id);
-        return [{ recipeId: id, slot, servings: candidate.recipe.servings, why: why.slice(0, 3) }];
+        return [{ recipeId: id, slot, servings: candidate.recipe.servings, why: why.slice(0, 2) }];
       });
       kept.set(key, { at: now().getTime(), ranked });
       return { ...base, rankedBy: 'directive', suggestions: shown(ranked) };

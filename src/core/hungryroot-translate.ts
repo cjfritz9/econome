@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import type { StoredCatalogRecipe } from '../data/hungryroot-catalog.ts';
-import type { HungryrootNutrition, HungryrootProductUse, HungryrootRecipe } from '../sources/hungryroot.ts';
+import type { HungryrootNutrition, HungryrootProduct, HungryrootProductUse, HungryrootRecipe } from '../sources/hungryroot.ts';
 import { recipeLink } from '../sources/hungryroot.ts';
 
 export interface MiseIngredient {
@@ -15,7 +15,9 @@ export interface MiseStep {
   ingredients: null;
 }
 
-export type MiseNutrition = Partial<Record<keyof HungryrootNutrition, number>> & { basis: 'stated' | 'estimated' };
+export type MiseNutrition = Partial<Record<keyof HungryrootNutrition | 'proteinPct' | 'carbsPct' | 'fatPct', number>> & {
+  basis: 'stated' | 'estimated';
+};
 
 export interface CatalogRecipe {
   id: string;
@@ -37,6 +39,7 @@ export interface CatalogRecipe {
     gone: boolean;
     image: string | null;
     products: HungryrootProductUse[];
+    nutritionWasWholeRecipe?: true;
   };
 }
 
@@ -90,15 +93,54 @@ export const servableImage = (url: string | null) => {
   }
 };
 
-const miseNutrition = (nutrition: HungryrootNutrition | null): MiseNutrition | undefined => {
-  if (!nutrition) return undefined;
-  const present = Object.entries(nutrition).filter((entry): entry is [keyof HungryrootNutrition, number] => entry[1] !== null);
-  return present.length > 0 ? { ...Object.fromEntries(present), basis: 'stated' } : undefined;
+const WHOLE_RECIPE_MATCH = { low: 0.6, high: 1.4 };
+const MORE_THAN_A_MEAL_KCAL = 1_300;
+
+const productsKcal = (recipe: HungryrootRecipe, products: Map<number, HungryrootProduct>) => {
+  let total = 0;
+  for (const { id, amount } of recipe.products) {
+    const product = products.get(id);
+    const kcal = product?.perServing?.kcal;
+    if (kcal === null || kcal === undefined || !product?.servings) return null;
+    total += kcal * product.servings * amount;
+  }
+  return recipe.products.length > 0 ? total : null;
 };
 
-export const catalogRecipe = (recipe: HungryrootRecipe): CatalogRecipe => {
+export const statesWholeRecipe = (recipe: HungryrootRecipe, products: Map<number, HungryrootProduct>) => {
+  const stated = recipe.nutrition?.kcal;
+  const fromProducts = productsKcal(recipe, products);
+  if (!stated || stated <= MORE_THAN_A_MEAL_KCAL || fromProducts === null || recipe.servings < 2) return false;
+  const ratio = fromProducts / stated;
+  return ratio >= WHOLE_RECIPE_MATCH.low && ratio <= WHOLE_RECIPE_MATCH.high;
+};
+
+const perServing = (value: number, servings: number) => Math.round((value / servings) * 10) / 10;
+
+const KCAL_PER_GRAM = { protein: 4, carbs: 4, fat: 9 } as const;
+
+const shareOfCalories = (grams: number | null | undefined, kcalPerGram: number, kcal: number | null | undefined) =>
+  grams === null || grams === undefined || !kcal ? undefined : Math.round(((grams * kcalPerGram) / kcal) * 1000) / 1000;
+
+const miseNutrition = (nutrition: HungryrootNutrition | null, divideBy: number): MiseNutrition | undefined => {
+  if (!nutrition) return undefined;
+  const present: Partial<Record<keyof HungryrootNutrition, number>> = Object.fromEntries(
+    Object.entries(nutrition).flatMap(([name, value]) => (value === null ? [] : [[name, divideBy > 1 ? perServing(value, divideBy) : value]])),
+  );
+  if (Object.keys(present).length === 0) return undefined;
+  const shares = Object.fromEntries(
+    (['protein', 'carbs', 'fat'] as const).flatMap((macro) => {
+      const share = shareOfCalories(present[macro], KCAL_PER_GRAM[macro], present.kcal);
+      return share === undefined ? [] : [[`${macro}Pct`, share]];
+    }),
+  );
+  return { ...present, ...shares, basis: 'stated' };
+};
+
+export const catalogRecipe = (recipe: HungryrootRecipe, products: Map<number, HungryrootProduct> = new Map()): CatalogRecipe => {
   const link = recipeLink(recipe.slug);
-  const nutrition = miseNutrition(recipe.nutrition);
+  const wholeRecipe = statesWholeRecipe(recipe, products);
+  const nutrition = miseNutrition(recipe.nutrition, wholeRecipe ? recipe.servings : 1);
   const image = servableImage(recipe.image);
   return {
     id: recipe.slug,
@@ -120,6 +162,7 @@ export const catalogRecipe = (recipe: HungryrootRecipe): CatalogRecipe => {
       gone: false,
       image: recipe.image,
       products: recipe.products,
+      ...(wholeRecipe && { nutritionWasWholeRecipe: true as const }),
     },
   };
 };

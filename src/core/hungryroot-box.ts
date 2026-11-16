@@ -67,17 +67,6 @@ export const starchIn = (recipe: HungryrootRecipe, products: Map<number, Hungryr
     return carbs === null ? [] : [{ product: use.name, carbs: round(carbs), credits: use.credits * use.amount }];
   });
 
-const MOST_KCAL = 1_200;
-const MOST_PROTEIN = 70;
-const MACRO_TOLERANCE = 0.35;
-
-export const plausibleNutrition = ({ nutrition }: HungryrootRecipe) => {
-  if (!nutrition?.kcal || nutrition.protein === null) return false;
-  if (nutrition.kcal > MOST_KCAL || nutrition.protein > MOST_PROTEIN) return false;
-  const fromMacros = 4 * nutrition.protein + 4 * (nutrition.carbs ?? 0) + 9 * (nutrition.fat ?? 0);
-  return Math.abs(fromMacros - nutrition.kcal) / nutrition.kcal <= MACRO_TOLERANCE;
-};
-
 export const boxCandidates = (
   forFour: HungryrootRecipe[],
   forTwo: HungryrootRecipe[],

@@ -23,13 +23,14 @@ const copyCatalog = async ({ source, store }: SyncDeps): Promise<CatalogRun> => 
   const products = await source.products();
   const stored = await store.entries();
 
+  const productsById = new Map(products.map((product) => [product.id, product]));
   const seen = new Set<string>();
   const changes: CatalogChange[] = [];
   const imageHostsLeftOff = new Set<string>();
   let unchanged = 0;
   let back = 0;
   for (const found of recipes) {
-    const recipe = catalogRecipe(found);
+    const recipe = catalogRecipe(found, productsById);
     if (seen.has(recipe.id)) continue;
     seen.add(recipe.id);
     if (found.image && !servableImage(found.image)) imageHostsLeftOff.add(hostOf(found.image));

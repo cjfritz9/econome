@@ -65,6 +65,7 @@ export const StoredCatalogRecipeSchema = z.object({
     gone: z.boolean(),
     image: z.string().nullable(),
     products: z.array(z.object({ id: z.number(), name: z.string(), brand: z.string().nullable(), amount: z.number(), credits: z.number() })),
+    nutritionWasWholeRecipe: z.boolean().optional(),
   }),
 });
 

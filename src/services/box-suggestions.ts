@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { weeksEndingWith, type CalendarWeek } from '../core/calendar.ts';
-import { boxCandidates, plausibleNutrition, rankCandidates, sameName, type BoxCandidate } from '../core/hungryroot-box.ts';
+import { boxCandidates, rankCandidates, sameName, type BoxCandidate } from '../core/hungryroot-box.ts';
 import { fromCatalog } from '../core/hungryroot-translate.ts';
 import type { Household } from '../data/household.ts';
 import type { HungryrootCatalogStore, StoredCatalogRecipe } from '../data/hungryroot-catalog.ts';
@@ -62,14 +62,6 @@ const candidateLine = ({ recipe, times, credits, starch, carbsWithoutStarch }: B
   ].join(' | ');
 };
 
-const plainReasons = ({ recipe, credits, starch, carbsWithoutStarch }: BoxCandidate) => [
-  `${round(recipe.nutrition?.protein)} g protein`,
-  starch.length > 0 && carbsWithoutStarch !== null
-    ? `${carbsWithoutStarch} g carbs without the ${starch[0]?.product.toLowerCase()}`
-    : `${round(recipe.nutrition?.carbs)} g carbs`,
-  `${credits} credits`,
-];
-
 const suggestionOf = (candidate: BoxCandidate, why: string[]): Suggestion => ({
   id: candidate.recipe.slug,
   times: candidate.times,
@@ -112,8 +104,7 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
 
     const offered = current.recipes
       .filter(({ hungryroot }) => hungryroot.featured && !hungryroot.gone)
-      .map(fromCatalog)
-      .filter(plausibleNutrition);
+      .map(fromCatalog);
     const ranked = rankCandidates(
       boxCandidates(
         offered.filter(({ servings }) => servings === 4),
@@ -135,7 +126,7 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
       ...base,
       rankedBy: 'protein',
       warning,
-      suggestions: shortlist.slice(0, MOST_PICKS).map((candidate) => suggestionOf(candidate, plainReasons(candidate))),
+      suggestions: shortlist.slice(0, MOST_PICKS).map((candidate) => suggestionOf(candidate, [])),
     });
     if (!directive) return byProtein(`There's no planning directive at ${settings.planningDirective}, so these are ranked by protein per calorie.`);
     if (shortlist.length === 0) return { ...base, rankedBy: 'directive', suggestions: [] };
@@ -154,7 +145,7 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
         const candidate = byId.get(id);
         if (!candidate || seen.has(id)) return [];
         seen.add(id);
-        return [suggestionOf(candidate, why.slice(0, 3))];
+        return [suggestionOf(candidate, why.slice(0, 2))];
       });
       const result: BoxSuggestions = { ...base, rankedBy: 'directive', suggestions: suggestions.slice(0, MOST_PICKS) };
       kept.set(key, { at: now().getTime(), result });

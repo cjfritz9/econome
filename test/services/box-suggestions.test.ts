@@ -25,7 +25,6 @@ const recipe = (
 const CATALOG = [
   recipe('tofu-bowl', 4, { protein: 35, kcal: 520 }),
   recipe('tempeh-tacos', 2, { protein: 30 }),
-  recipe('kids-plate', 4, { protein: 108, kcal: 2290, carbs: 226, fat: 105 }),
   recipe('dropped-curry', 4, { gone: true }),
   recipe('hidden-salad', 4, { featured: false }),
   recipe('light-soup', 4, { protein: 15, kcal: 300, carbs: 40, fat: 5 }),
@@ -71,7 +70,7 @@ describe('boxSuggestionService', () => {
     expect(prompts[0]).toContain('Maximize protein; lean lower-carb.');
   });
 
-  it('leaves out recipes in this or recent boxes, dropped or hidden ones, low-protein ones, and nutrition that is really a whole recipe', async () => {
+  it('leaves out recipes in this or recent boxes, dropped or hidden ones, and low-protein ones', async () => {
     const { service, prompts } = setup();
 
     await service.suggest(household, WEEK);
@@ -101,7 +100,7 @@ describe('boxSuggestionService', () => {
     expect(result.rankedBy).toBe('protein');
     expect(result.warning).toMatch(/ranked by protein per calorie/);
     expect(result.suggestions.map(({ id }) => id)).toEqual(['tofu-bowl', 'tempeh-tacos']);
-    expect(result.suggestions[0]?.why).toEqual(['35 g protein', '50 g carbs', '9 credits']);
+    expect(result.suggestions[0]?.why).toEqual([]);
   });
 
   it('ranks by protein without asking Claude when there is no planning directive', async () => {
