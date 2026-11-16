@@ -11,6 +11,7 @@ import { AccessError, ECONOME_FEATURE, requireFeature, type Access } from '../da
 import { describeHousehold, requireHousehold, type DailySpend, type Households } from '../data/household.ts';
 import type { HungryrootCatalogStore } from '../data/hungryroot-catalog.ts';
 import type { HungryrootRecipes } from '../data/hungryroot-recipes.ts';
+import type { HungryrootUnavailable } from '../data/hungryroot-unavailable.ts';
 import { loadWeeks, type Weeks } from '../data/weeks.ts';
 import { logger } from '../logger.ts';
 import { NotFoundError, RefusedError, UnavailableError, UpstreamError } from '../services/errors.ts';
@@ -40,6 +41,7 @@ export interface HttpDeps extends ShopDeps, Omit<LookupDeps, 'buyList'> {
   allowedOrigins: string[];
   catalog: Pick<HungryrootCatalogStore, 'recentRuns' | 'findRecipes' | 'allRecipes' | 'allProducts'>;
   hungryrootRecipes: HungryrootRecipes;
+  unavailable: HungryrootUnavailable;
 }
 
 const FillResultSchema = z.object({
@@ -79,7 +81,7 @@ const sameSecret = (given: string, expected: string) => timingSafeEqual(digest(g
 
 const sameStore = (a: string, b: string) => a.localeCompare(b, 'en', { sensitivity: 'base' }) === 0;
 
-export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret, allowedOrigins, catalog, hungryrootRecipes, ...shop }: HttpDeps) => {
+export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret, allowedOrigins, catalog, hungryrootRecipes, unavailable, ...shop }: HttpDeps) => {
   const { weeks, households, routines } = shop;
   const lookups = { ...shop, buyList: buyListFrom(shop) };
   const app = new Hono<Env>();
@@ -151,7 +153,15 @@ export const createApp = ({ verifier, access, spend, fillRoutine, routineSecret,
   app.route('/api', planRoutes(lookups));
   app.route(
     '/api',
-    hungryrootRoutes({ catalog, hungryrootRecipes, weeks: shop.weeks, notes: shop.notes, claude: shop.claude, ...(shop.now && { now: shop.now }) }),
+    hungryrootRoutes({
+      catalog,
+      hungryrootRecipes,
+      unavailable,
+      weeks: shop.weeks,
+      notes: shop.notes,
+      claude: shop.claude,
+      ...(shop.now && { now: shop.now }),
+    }),
   );
 
   app.post('/routines/instacart-fill/result', fromRoutine, async (c) => {

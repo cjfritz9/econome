@@ -9,6 +9,7 @@ import type { Notes } from '../data/notes.ts';
 import type { Claude } from '../llm/claude.ts';
 import { boxSuggestionService } from '../services/box-suggestions.ts';
 import type { HungryrootRecipes } from '../data/hungryroot-recipes.ts';
+import type { HungryrootUnavailable } from '../data/hungryroot-unavailable.ts';
 import { emptyWeek, loadWeeks, type HungryrootMeal, type Weeks } from '../data/weeks.ts';
 import { dateParam, jsonBody, type Env } from './context.ts';
 import { weekRef, weekView } from './views.ts';
@@ -27,15 +28,22 @@ const Limit = z.coerce.number().int().min(1).max(24).default(12);
 export interface HungryrootDeps {
   catalog: Pick<HungryrootCatalogStore, 'recentRuns' | 'findRecipes' | 'allRecipes' | 'allProducts'>;
   hungryrootRecipes: HungryrootRecipes;
+  unavailable: HungryrootUnavailable;
   weeks: Weeks;
   notes: Notes;
   claude: Claude;
   now?: () => Date;
 }
 
-export const hungryrootRoutes = ({ catalog, hungryrootRecipes, weeks, notes, claude, now = () => new Date() }: HungryrootDeps) => {
+const recipeId = (c: Context<Env>) => {
+  const id = c.req.param('id') ?? '';
+  if (!/^[^/]{1,300}$/.test(id)) throw new HTTPException(400, { message: "Give the recipe's catalogue id." });
+  return id;
+};
+
+export const hungryrootRoutes = ({ catalog, hungryrootRecipes, unavailable, weeks, notes, claude, now = () => new Date() }: HungryrootDeps) => {
   const routes = new Hono<Env>();
-  const suggestions = boxSuggestionService({ catalog, weeks, notes, claude, now });
+  const suggestions = boxSuggestionService({ catalog, unavailable, weeks, notes, claude, now });
 
   const savedWeek = async (householdId: string, week: ReturnType<typeof chooseWeek>) => {
     const [saved = { week, ...emptyWeek() }] = await loadWeeks(weeks, householdId, [week]);
@@ -78,6 +86,8 @@ export const hungryrootRoutes = ({ catalog, hungryrootRecipes, weeks, notes, cla
       }),
     );
     await weeks.saveHungryroot(household.id, week.id, box, c.var.uid);
+    const marked = new Set((await unavailable.list(household.id)).map(({ id }) => id));
+    await unavailable.clear(household.id, box.flatMap(({ slug }) => (slug && marked.has(slug) ? [slug] : [])));
     return c.json(weekView(await savedWeek(household.id, week), household, now()));
   });
 
@@ -97,6 +107,33 @@ export const hungryrootRoutes = ({ catalog, hungryrootRecipes, weeks, notes, cla
     if (planned.hungryroot.length === 0) throw new HTTPException(409, { message: `${week.id} has no Hungryroot box yet; confirm one first.` });
     await weeks.lockBox(household.id, week.id, c.var.uid);
     return c.json(weekView({ ...planned, boxLocked: true }, household, now()));
+  });
+
+  routes.get('/hungryroot/unavailable', async (c) => {
+    const marked = await unavailable.list(c.var.household.id);
+    const listed = new Map((await catalog.findRecipes(marked.map(({ id }) => id))).map((recipe) => [recipe.id, !recipe.hungryroot.gone]));
+    return c.json({
+      recipes: marked
+        .sort((a, b) => a.firstMarkedAt.localeCompare(b.firstMarkedAt))
+        .map((record) => ({ ...record, stillListed: listed.get(record.id) ?? false })),
+    });
+  });
+
+  routes.post('/hungryroot/unavailable/:id', async (c) => {
+    const id = recipeId(c);
+    const household = c.var.household;
+    const [recipe] = await catalog.findRecipes([id]);
+    if (!recipe) throw new HTTPException(400, { message: `${id} isn't in the Hungryroot catalogue.` });
+    const body = (await jsonBody(c, z.object({ week: z.string().optional() }).nullable())) ?? {};
+    const week = chooseWeek(household.settings.timezone, body.week);
+    const at = now().toISOString();
+    const record = await unavailable.mark(household.id, { id, title: recipe.title, hungryrootId: recipe.hungryroot.id, week: week.id, by: c.var.uid, at });
+    return c.json({ recipe: record });
+  });
+
+  routes.delete('/hungryroot/unavailable/:id', async (c) => {
+    await unavailable.clear(c.var.household.id, [recipeId(c)]);
+    return c.json({ cleared: true });
   });
 
   routes.get('/hungryroot/runs', async (c) => {

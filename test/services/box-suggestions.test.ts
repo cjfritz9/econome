@@ -4,7 +4,7 @@ import type { Household } from '../../src/data/household.ts';
 import type { StoredCatalogRecipe } from '../../src/data/hungryroot-catalog.ts';
 import type { HungryrootProduct } from '../../src/sources/hungryroot.ts';
 import { boxSuggestionService } from '../../src/services/box-suggestions.ts';
-import { answeringClaude, memoryNotes, memoryWeeks } from '../fakes.ts';
+import { answeringClaude, memoryNotes, memoryUnavailable, memoryWeeks } from '../fakes.ts';
 
 const WEEK: CalendarWeek = { id: '2026-W48', start: '2026-11-23', end: '2026-11-29' };
 const household: Household = { id: 'h1', name: 'Home', members: ['uid1'], settings: { timezone: 'America/New_York', hungryroot: { boxServings: 12 } } };
@@ -44,7 +44,17 @@ const setup = ({
   notes = [DIRECTIVE],
   catalog = CATALOG,
   products = [] as HungryrootProduct[],
-}: { answer?: (prompt: string) => unknown; notes?: (typeof DIRECTIVE)[]; catalog?: StoredCatalogRecipe[]; products?: HungryrootProduct[] } = {}) => {
+  unavailableIds = [] as string[],
+}: {
+  answer?: (prompt: string) => unknown;
+  notes?: (typeof DIRECTIVE)[];
+  catalog?: StoredCatalogRecipe[];
+  products?: HungryrootProduct[];
+  unavailableIds?: string[];
+} = {}) => {
+  const unavailable = memoryUnavailable(
+    unavailableIds.map((id) => ({ id, title: id, hungryrootId: 1, firstMarkedAt: 'x', lastMarkedAt: 'x', times: 1, lastMarkedBy: 'uid1', lastWeek: '2026-W48' })),
+  );
   const { claude, prompts } = answeringClaude(answer);
   const weeks = memoryWeeks({
     '2026-W47': { hungryroot: [{ title: 'Last Week Burger', servings: 4 }] },
@@ -52,6 +62,7 @@ const setup = ({
   });
   const service = boxSuggestionService({
     catalog: { recentRuns: async () => [], allRecipes: async () => catalog, allProducts: async () => products },
+    unavailable: unavailable.store,
     weeks: weeks.store,
     notes: memoryNotes(notes).store,
     claude,
@@ -145,6 +156,15 @@ describe('boxSuggestionService', () => {
 
     expect(first.suggestions.map(({ id }) => id)).toEqual(['teriyaki-peppers']);
     expect(next.suggestions.map(({ id }) => id)).toEqual(['tempeh-tacos']);
+  });
+
+  it('never offers a recipe the household marked as not available', async () => {
+    const { service, prompts } = setup({ unavailableIds: ['tofu-bowl'] });
+
+    await service.suggest(household, WEEK);
+
+    expect(prompts[0]).not.toContain('tofu-bowl |');
+    expect(prompts[0]).toContain('tempeh-tacos |');
   });
 
   it("doesn't save a list it couldn't rank by the directive, so the next look tries again", async () => {

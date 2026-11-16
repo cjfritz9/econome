@@ -1,4 +1,5 @@
 import { storedSuggestions } from '../src/data/suggestions.ts';
+import { markedAgain, type HungryrootUnavailable, type UnavailableRecipe } from '../src/data/hungryroot-unavailable.ts';
 import { lineKey } from '../src/core/ingredient-lines.ts';
 import type { ConcernTally } from '../src/core/vegan.ts';
 import type { Decision, Decisions } from '../src/data/decisions.ts';
@@ -232,4 +233,20 @@ export const memoryJobs = () => {
     },
   };
   return { store, stored };
+};
+
+export const memoryUnavailable = (initial: UnavailableRecipe[] = []) => {
+  const records = new Map(initial.map((record) => [record.id, record]));
+  const store: HungryrootUnavailable = {
+    list: async () => [...records.values()],
+    mark: async (_householdId, mark) => {
+      const record = markedAgain(records.get(mark.id), mark);
+      records.set(mark.id, record);
+      return record;
+    },
+    clear: async (_householdId, ids) => {
+      for (const id of ids) records.delete(id);
+    },
+  };
+  return { store, records };
 };

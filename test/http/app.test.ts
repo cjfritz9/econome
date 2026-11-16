@@ -99,6 +99,7 @@ const setup = ({ sections = {}, fillRoutine = FILL_ROUTINE }: { sections?: Recor
     allowedOrigins: [MISE],
     catalog: { recentRuns: async () => [], findRecipes: async () => [], allRecipes: async () => [], allProducts: async () => [] },
     hungryrootRecipes: { find: async () => [], save: async () => undefined },
+    unavailable: { list: async () => [], mark: async () => Promise.reject(new Error('not used')), clear: async () => undefined },
   });
   return { app, saved, fired };
 };

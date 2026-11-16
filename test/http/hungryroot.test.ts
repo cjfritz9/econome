@@ -194,3 +194,37 @@ describe('GET /api/weeks/:date/hungryroot/suggestions', () => {
     });
   });
 });
+
+describe('marking a Hungryroot recipe not available', () => {
+  it('records it with when and how often, lists it for review, and clears it', async () => {
+    const harness = setup({ catalogRecipes: [TIKKA, GONE] });
+
+    const first = await harness.call('POST', `/hungryroot/unavailable/${TIKKA.id}`, { week: '2026-11-23' });
+    harness.advance(60);
+    await harness.call('POST', `/hungryroot/unavailable/${TIKKA.id}`);
+    await harness.call('POST', `/hungryroot/unavailable/${GONE.id}`);
+    const review = await harness.call('GET', '/hungryroot/unavailable');
+
+    expect(first).toMatchObject({ status: 200, body: { recipe: { id: TIKKA.id, title: TIKKA.title, times: 1, lastWeek: '2026-W48' } } });
+    expect(review.body.recipes).toMatchObject([
+      { id: TIKKA.id, times: 2, firstMarkedAt: '2026-11-10T18:00:00.000Z', lastMarkedAt: '2026-11-10T19:00:00.000Z', stillListed: true },
+      { id: GONE.id, times: 1, stillListed: false },
+    ]);
+
+    await harness.call('DELETE', `/hungryroot/unavailable/${TIKKA.id}`);
+    expect(((await harness.call('GET', '/hungryroot/unavailable')).body.recipes as { id: string }[]).map(({ id }) => id)).toEqual([GONE.id]);
+  });
+
+  it('refuses a recipe that is not in the catalogue', async () => {
+    expect((await setup().call('POST', '/hungryroot/unavailable/nope-1')).status).toBe(400);
+  });
+
+  it('clears the mark when the recipe goes into a box, since it was available after all', async () => {
+    const harness = setup({ catalogRecipes: [TIKKA] });
+    await harness.call('POST', `/hungryroot/unavailable/${TIKKA.id}`);
+
+    await harness.call('PUT', `/weeks/${DATE}/hungryroot`, { recipes: [{ id: TIKKA.id }] });
+
+    expect([...harness.unavailable.records.keys()]).toEqual([]);
+  });
+});

@@ -3,6 +3,7 @@ import { boxCandidates, dishOf, distinctDishes, rankCandidates, type BoxCandidat
 import { fromCatalog } from '../core/hungryroot-translate.ts';
 import type { Household } from '../data/household.ts';
 import type { HungryrootCatalogStore, StoredCatalogRecipe } from '../data/hungryroot-catalog.ts';
+import type { HungryrootUnavailable } from '../data/hungryroot-unavailable.ts';
 import type { Notes } from '../data/notes.ts';
 import type { BoxPick } from '../data/suggestions.ts';
 import { withDefaults } from '../data/settings.ts';
@@ -20,6 +21,7 @@ const DEFAULT_BOX_SERVINGS = 12;
 
 export interface BoxSuggestionDeps {
   catalog: Pick<HungryrootCatalogStore, 'recentRuns' | 'allRecipes' | 'allProducts'>;
+  unavailable: Pick<HungryrootUnavailable, 'list'>;
   weeks: Weeks;
   notes: Notes;
   claude: Claude;
@@ -67,7 +69,7 @@ const suggestionOf = (candidate: BoxCandidate, why: string[]): Suggestion => ({
     }),
 });
 
-export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () => new Date() }: BoxSuggestionDeps) => {
+export const boxSuggestionService = ({ catalog, unavailable, weeks, notes, claude, now = () => new Date() }: BoxSuggestionDeps) => {
   let copy: { runAt: number; recipes: StoredCatalogRecipe[]; products: HungryrootProduct[] } | null = null;
 
   const currentCopy = async () => {
@@ -82,11 +84,13 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
 
   const suggest = async (household: Household, week: CalendarWeek, { renew = false } = {}): Promise<BoxSuggestions> => {
     const settings = withDefaults(household.settings);
-    const [planned, allNotes, stored] = await Promise.all([
+    const [planned, allNotes, stored, marked] = await Promise.all([
       loadWeeks(weeks, household.id, weeksEndingWith(week, RECENT_BOX_WEEKS + 1)),
       notes.list(household.id),
       weeks.findSuggestions(household.id, week.id),
+      unavailable.list(household.id),
     ]);
+    const notAvailable = new Set(marked.map(({ id }) => id));
     const box = planned.find(({ week: { id } }) => id === week.id)?.hungryroot ?? [];
     const boxServings = settings.hungryroot?.boxServings ?? DEFAULT_BOX_SERVINGS;
     const chosenServings = box.reduce((sum, { servings }) => sum + servings, 0);
@@ -94,13 +98,15 @@ export const boxSuggestionService = ({ catalog, weeks, notes, claude, now = () =
     const directive = allNotes.find(({ path }) => path === settings.planningDirective);
     const base = { week, boxServings, chosenServings, wanted, directive: settings.planningDirective };
     const inBox = new Set(box.flatMap(({ slug }) => slug ?? []));
-    const shown = (picks: Suggestion[]) => picks.filter(({ id }) => !inBox.has(id)).slice(0, MOST_PICKS);
+    const shown = (picks: Suggestion[]) => picks.filter(({ id }) => !inBox.has(id) && !notAvailable.has(id)).slice(0, MOST_PICKS);
 
     if (stored.box && !renew) return { ...base, rankedBy: 'directive', madeAt: stored.box.madeAt, suggestions: shown(stored.box.picks) };
     const shownBefore = renew && stored.box ? new Set([...stored.box.seen, ...stored.box.picks.map(({ id }) => id)]) : new Set<string>();
 
     const current = await currentCopy();
-    const offered = current.recipes.filter(({ hungryroot }) => hungryroot.featured && !hungryroot.gone).map(fromCatalog);
+    const offered = current.recipes
+      .filter(({ id, hungryroot }) => hungryroot.featured && !hungryroot.gone && !notAvailable.has(id))
+      .map(fromCatalog);
     const ranked = rankCandidates(
       boxCandidates(
         offered.filter(({ servings }) => servings === 4),

@@ -7,6 +7,7 @@ import { firestoreDecisions } from '../data/firestore-decisions.ts';
 import { firestoreHouseholds } from '../data/firestore-households.ts';
 import { firestoreHungryrootCatalog } from '../data/firestore-hungryroot-catalog.ts';
 import { firestoreHungryrootRecipes } from '../data/firestore-hungryroot-recipes.ts';
+import { firestoreHungryrootUnavailable } from '../data/firestore-hungryroot-unavailable.ts';
 import { firestoreIngredients } from '../data/firestore-ingredients.ts';
 import { firestoreJobs } from '../data/firestore-jobs.ts';
 import { firestoreNotes } from '../data/firestore-notes.ts';
@@ -49,6 +50,7 @@ const main = () => {
     allowedOrigins: config.allowedOrigins,
     catalog: firestoreHungryrootCatalog(db),
     hungryrootRecipes: firestoreHungryrootRecipes(db),
+    unavailable: firestoreHungryrootUnavailable(db),
   });
   serve({ fetch: app.fetch, port: config.port }, ({ port }) => logger.info({ port }, 'Économe HTTP server ready'));
 };
